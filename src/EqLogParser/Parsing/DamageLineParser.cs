@@ -8,7 +8,9 @@ public sealed partial class DamageLineParser : IDamageLineParser
 {
     public DamageEvent? TryParse(string message)
     {
-        return TryParseDirectDamage(message) ?? TryParseYourEffectDamage(message);
+        return TryParseDirectDamage(message)
+            ?? TryParseYourEffectDamage(message)
+            ?? TryParseOtherDirectDamage(message);
     }
 
     private static DamageEvent? TryParseDirectDamage(string message)
@@ -20,6 +22,7 @@ public sealed partial class DamageLineParser : IDamageLineParser
         }
 
         return new DamageEvent(
+            "You",
             match.Groups["mob"].Value,
             int.Parse(match.Groups["damage"].Value, CultureInfo.InvariantCulture),
             DamageKind.Direct);
@@ -34,18 +37,50 @@ public sealed partial class DamageLineParser : IDamageLineParser
         }
 
         return new DamageEvent(
+            "You",
             match.Groups["mob"].Value,
             int.Parse(match.Groups["damage"].Value, CultureInfo.InvariantCulture),
             DamageKind.YourEffect);
     }
 
+    private static DamageEvent? TryParseOtherDirectDamage(string message)
+    {
+        var match = OtherDirectDamageRegex().Match(message);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        // Skip lines where the mob target is "YOU" — those are mobs attacking the player.
+        var mob = match.Groups["mob"].Value;
+        if (mob.Equals("YOU", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return new DamageEvent(
+            match.Groups["source"].Value,
+            mob,
+            int.Parse(match.Groups["damage"].Value, CultureInfo.InvariantCulture),
+            DamageKind.Direct);
+    }
+
+    // Matches "You verb mob for N points of [X] damage [by spell][.]"
     [GeneratedRegex(
         @"^You\s+\S+\s+(?<mob>.+?)\s+for\s+(?<damage>\d+)\s+points\s+of\s+(?:(?:\S+)\s+)?damage(?:\s+by\s+.+?)?(?:\.|$)",
         RegexOptions.CultureInvariant)]
     private static partial Regex DirectDamageRegex();
 
+    // Matches "mob is ... by YOUR ... for N points of [X] damage[.]"
     [GeneratedRegex(
         @"^(?<mob>.+?)\s+is\s+.+?\s+by\s+YOUR\s+.+?\s+for\s+(?<damage>\d+)\s+points\s+of\s+(?:(?:\S+)\s+)?damage(?:\.|$)",
         RegexOptions.CultureInvariant)]
     private static partial Regex YourEffectDamageRegex();
+
+    // Matches "OtherChar verb mob for N points of [X] damage [by spell][.]"
+    // Source must be a single word (player/pet names are always one token here).
+    [GeneratedRegex(
+        @"^(?<source>\S+)\s+\S+\s+(?<mob>.+?)\s+for\s+(?<damage>\d+)\s+points\s+of\s+(?:(?:\S+)\s+)?damage(?:\s+by\s+.+?)?(?:\.|$)",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex OtherDirectDamageRegex();
 }

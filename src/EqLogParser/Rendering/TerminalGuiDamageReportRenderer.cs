@@ -51,6 +51,15 @@ public sealed class TerminalGuiDamageReportRenderer
             Title = $"Individual kills ({report.Summary.Kills.Count:N0})",
             X = Pos.Right(totalsFrame),
             Y = Pos.Bottom(header),
+            Width = Dim.Percent(28),
+            Height = Dim.Fill(1)
+        };
+
+        var lootFrame = new FrameView
+        {
+            Title = $"Loot ({report.Summary.Loot.Count:N0})",
+            X = Pos.Right(killsFrame),
+            Y = Pos.Bottom(header),
             Width = Dim.Fill(),
             Height = Dim.Fill(1)
         };
@@ -65,51 +74,69 @@ public sealed class TerminalGuiDamageReportRenderer
         };
 
         var totalsTable = CreateTableView(CreateMobTotalsTable(report.Summary.Mobs));
-        var killsTable = CreateTableView(CreateKillsTable(report.Summary.Kills));
+        var killsTable  = CreateTableView(CreateKillsTable(report.Summary.Kills));
+        var lootTable   = CreateTableView(CreateLootTable(report.Summary.Loot));
 
         totalsFrame.Add(totalsTable);
         killsFrame.Add(killsTable);
+        lootFrame.Add(lootTable);
 
         // Tab moves focus between the left and right panels.
         // +/- adjust the live-refresh interval (watch mode only).
         // F opens a filter dialog to narrow tables by mob name.
-        // 1/2 toggle the left/right panels.
+        // 1/2/3 toggle the totals/kills/loot panels.
+        // D opens a kill detail breakdown dialog.
         bool showTotals = true;
         bool showKills  = true;
+        bool showLoot   = true;
         string currentFilter = string.Empty;
         DamageReport lastReport = report;
+        // Tracks the kill rows currently visible in killsTable (respects active filter + sort).
+        List<KillSummary> displayedKills = report.Summary.Kills.OrderByDescending(k => k.LineNumber).ToList();
         object? timeoutToken = null;
         var currentInterval = refreshInterval ?? TimeSpan.Zero;
 
         void UpdateLayout()
         {
-            if (showTotals && showKills)
+            // Determine which panels are visible.
+            var visible = new List<FrameView>(3);
+            if (showTotals) visible.Add(totalsFrame);
+            if (showKills)  visible.Add(killsFrame);
+            if (showLoot)   visible.Add(lootFrame);
+
+            // If all hidden, reset to all visible.
+            if (visible.Count == 0)
             {
-                totalsFrame.Visible = true;
-                killsFrame.Visible  = true;
-                totalsFrame.Width   = Dim.Percent(45);
-                killsFrame.X        = Pos.Right(totalsFrame);
-                killsFrame.Width    = Dim.Fill();
-            }
-            else if (showTotals)
-            {
-                totalsFrame.Visible = true;
-                killsFrame.Visible  = false;
-                totalsFrame.Width   = Dim.Fill();
-            }
-            else if (showKills)
-            {
-                totalsFrame.Visible = false;
-                killsFrame.Visible  = true;
-                killsFrame.X        = 0;
-                killsFrame.Width    = Dim.Fill();
-            }
-            else
-            {
-                // Both hidden — reset both to visible.
-                showTotals = showKills = true;
+                showTotals = showKills = showLoot = true;
                 UpdateLayout();
                 return;
+            }
+
+            // Hide panels not in the visible list.
+            totalsFrame.Visible = showTotals;
+            killsFrame.Visible  = showKills;
+            lootFrame.Visible   = showLoot;
+
+            // Lay out visible panels as equal-width columns.
+            int pct = 100 / visible.Count;
+            for (int i = 0; i < visible.Count; i++)
+            {
+                var frame = visible[i];
+                if (i == 0)
+                {
+                    frame.X = 0;
+                    frame.Width = visible.Count == 1 ? Dim.Fill() : Dim.Percent(pct);
+                }
+                else if (i == visible.Count - 1)
+                {
+                    frame.X = Pos.Right(visible[i - 1]);
+                    frame.Width = Dim.Fill();
+                }
+                else
+                {
+                    frame.X = Pos.Right(visible[i - 1]);
+                    frame.Width = Dim.Percent(pct * (i + 1)) - Dim.Percent(pct * i);
+                }
             }
 
             window.SetNeedsDraw();
@@ -123,13 +150,21 @@ public sealed class TerminalGuiDamageReportRenderer
             var filteredKills = string.IsNullOrWhiteSpace(filter)
                 ? r.Summary.Kills
                 : r.Summary.Kills.Where(k => k.Mob.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+            var filteredLoot  = string.IsNullOrWhiteSpace(filter)
+                ? r.Summary.Loot
+                : r.Summary.Loot.Where(l => l.MobName.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
 
+            displayedKills = filteredKills.OrderByDescending(k => k.LineNumber).ToList();
             killsFrame.Title = $"Individual kills ({filteredKills.Count:N0})";
+            lootFrame.Title  = $"Loot ({filteredLoot.Count:N0})";
             totalsTable.Table = new DataTableSource(CreateMobTotalsTable(filteredMobs));
-            killsTable.Table  = new DataTableSource(CreateKillsTable(filteredKills));
+            killsTable.Table  = new DataTableSource(CreateKillsTable(displayedKills));
+            lootTable.Table   = new DataTableSource(CreateLootTable(filteredLoot));
             totalsTable.SetNeedsDraw();
             killsTable.SetNeedsDraw();
+            lootTable.SetNeedsDraw();
             killsFrame.SetNeedsDraw();
+            lootFrame.SetNeedsDraw();
         }
 
         void ScheduleRefresh()
@@ -155,15 +190,14 @@ public sealed class TerminalGuiDamageReportRenderer
             var filterTag = string.IsNullOrWhiteSpace(currentFilter)
                 ? ""
                 : $" [filter: \"{currentFilter}\"]";
-            var viewTag = (showTotals, showKills) switch
-            {
-                (false, _) => " [kills only]",
-                (_, false) => " [totals only]",
-                _          => ""
-            };
+            var hidden = new List<string>(3);
+            if (!showTotals) hidden.Add("totals");
+            if (!showKills)  hidden.Add("kills");
+            if (!showLoot)   hidden.Add("loot");
+            var viewTag = hidden.Count > 0 ? $" [hidden: {string.Join(", ", hidden)}]" : "";
             footer.Text = refreshReport is not null
-                ? $"Live every {currentInterval.TotalSeconds:N0}s (+/- change). F filter{filterTag}. 1/2 toggle panels{viewTag}. Tab/Arrow/PgUp/PgDn nav. Esc exits."
-                : $"F filter{filterTag}. 1/2 toggle panels{viewTag}. Tab/Arrow/PgUp/PgDn nav. Esc exits. --text for plain.";
+                ? $"Live every {currentInterval.TotalSeconds:N0}s (+/- change). F filter{filterTag}. 1/2/3 panels{viewTag}. D detail. Tab/Arrow/PgUp/PgDn. Esc exits."
+                : $"F filter{filterTag}. 1/2/3 panels{viewTag}. D detail (kills panel). Tab/Arrow/PgUp/PgDn. Esc. --text plain.";
             footer.SetNeedsDraw();
         }
 
@@ -221,17 +255,105 @@ public sealed class TerminalGuiDamageReportRenderer
         }
 
         // Use app.Keyboard.KeyDown (application-scoped, fires before any view sees the key)
-        // so our bindings work regardless of which view currently has focus.
+        void OpenKillDetailDialog(KillSummary kill)
+        {
+            var sources = kill.Mob.BySource;
+            var killLoot = lastReport.Summary.Loot
+                .Where(l => l.KillLineNumber == kill.LineNumber)
+                .OrderBy(l => l.LineNumber)
+                .ToList();
+
+            var total      = kill.Mob.TotalDamage;
+            var maxDamage  = sources.Count > 0 ? sources.Max(s => s.TotalDamage) : 1L;
+            const int BarWidth = 22;
+
+            // Text bar chart
+            var sb = new System.Text.StringBuilder();
+            foreach (var src in sources)
+            {
+                var pct    = total > 0 ? src.TotalDamage * 100.0 / total : 0;
+                var filled = maxDamage > 0 ? (int)(src.TotalDamage * BarWidth / (double)maxDamage) : 0;
+                var bar    = new string('█', filled) + new string('░', BarWidth - filled);
+                sb.AppendLine($"{src.Source,-14} {bar} {src.TotalDamage,8:N0}  {pct,5:F1}%");
+            }
+
+            int tableRows  = sources.Count > 0 ? Math.Min(sources.Count + 2, 10) : 0;
+            int barRows    = sources.Count > 0 ? sources.Count + 1 : 0;
+            int lootRows   = killLoot.Count > 0 ? Math.Min(killLoot.Count + 2, 8) : 0;
+            int dialogH    = Math.Clamp(tableRows + barRows + lootRows + 8, 16, 42);
+
+            var dialog = new Dialog
+            {
+                Title  = $"Kill: {kill.Mob.Name}  line {kill.LineNumber}  killed by {kill.KilledBy}",
+                Width  = 72,
+                Height = dialogH
+            };
+
+            View lastAdded = dialog;
+            int  lastY     = 1;
+
+            if (sources.Count > 0)
+            {
+                var detailTable = new TableView(new DataTableSource(CreateSourceBreakdownTable(sources, total)))
+                {
+                    X = 1, Y = lastY,
+                    Width = Dim.Fill(1),
+                    Height = tableRows,
+                    FullRowSelect = true
+                };
+                dialog.Add(detailTable);
+
+                var barLabel = new Label
+                {
+                    Text   = sb.ToString().TrimEnd(),
+                    X      = 1,
+                    Y      = Pos.Bottom(detailTable) + 1,
+                    Width  = Dim.Fill(1),
+                    Height = barRows
+                };
+                dialog.Add(barLabel);
+                lastAdded = barLabel;
+                lastY     = 0; // unused when using Pos.Bottom
+            }
+
+            if (killLoot.Count > 0)
+            {
+                var lootLabel = new Label
+                {
+                    Text   = $"Loot ({killLoot.Count}):",
+                    X      = 1,
+                    Y      = sources.Count > 0 ? Pos.Bottom(lastAdded) + 1 : lastY,
+                    Width  = Dim.Fill(1),
+                    Height = 1
+                };
+                var lootView = new TableView(new DataTableSource(CreateLootTable(killLoot)))
+                {
+                    X = 1,
+                    Y = Pos.Bottom(lootLabel),
+                    Width = Dim.Fill(1),
+                    Height = lootRows,
+                    FullRowSelect = true
+                };
+                dialog.Add(lootLabel, lootView);
+            }
+
+            dialog.AddButton(new Button { Text = "_Close" });
+            app.Run(dialog);
+        }
+
         app.Keyboard.KeyDown += (_, e) =>
         {
             if (modalActive) return;
 
             if (e.KeyCode == KeyCode.Tab)
             {
+                // Cycle focus through visible panels: totals -> kills -> loot -> totals ...
                 if (totalsTable.HasFocus)
-                    killsTable.SetFocus();
+                    (showKills ? killsTable : showLoot ? lootTable : totalsTable).SetFocus();
+                else if (killsTable.HasFocus)
+                    (showLoot ? lootTable : showTotals ? totalsTable : killsTable).SetFocus();
                 else
-                    totalsTable.SetFocus();
+                    (showTotals ? totalsTable : showKills ? killsTable : lootTable).SetFocus();
                 e.Handled = true;
                 return;
             }
@@ -245,10 +367,24 @@ public sealed class TerminalGuiDamageReportRenderer
                 return;
             }
 
-            if (e.AsRune.Value is '1' or '2')
+            if (e.KeyCode == KeyCode.D && killsTable.HasFocus)
             {
-                if (e.AsRune.Value == '1') showTotals = !showTotals;
-                else                       showKills  = !showKills;
+                var row = killsTable.Value?.SelectedCell.Y ?? 0;
+                if (row >= 0 && row < displayedKills.Count)
+                {
+                    modalActive = true;
+                    OpenKillDetailDialog(displayedKills[row]);
+                    modalActive = false;
+                }
+                e.Handled = true;
+                return;
+            }
+
+            if (e.AsRune.Value is '1' or '2' or '3')
+            {
+                if (e.AsRune.Value == '1')      showTotals = !showTotals;
+                else if (e.AsRune.Value == '2') showKills  = !showKills;
+                else                            showLoot   = !showLoot;
                 UpdateLayout();
                 UpdateFooter();
                 e.Handled = true;
@@ -276,7 +412,7 @@ public sealed class TerminalGuiDamageReportRenderer
             ScheduleRefresh();
         }
 
-        window.Add(header, totalsFrame, killsFrame, footer);
+        window.Add(header, totalsFrame, killsFrame, lootFrame, footer);
         app.Run(window);
     }
 
@@ -325,7 +461,7 @@ public sealed class TerminalGuiDamageReportRenderer
     {
         var table = CreateTable("Line", "Time", "Mob", "Total", "Direct", "YOUR", "Hits", "Killed by");
 
-        foreach (var kill in kills.OrderByDescending(k => k.LineNumber))
+        foreach (var kill in kills)
         {
             table.Rows.Add(
                 kill.LineNumber,
@@ -336,6 +472,36 @@ public sealed class TerminalGuiDamageReportRenderer
                 kill.Mob.YourEffectDamage,
                 kill.Mob.Hits,
                 kill.KilledBy);
+        }
+
+        return table;
+    }
+
+    private static DataTable CreateLootTable(IEnumerable<LootSummary> loot)
+    {
+        var table = CreateTable("Line", "Time", "Item", "Mob", "Sold?", "Kill#");
+
+        foreach (var l in loot.OrderByDescending(x => x.LineNumber))
+        {
+            table.Rows.Add(
+                l.LineNumber,
+                l.Timestamp,
+                l.ItemName,
+                l.MobName,
+                l.AutoSold ? "sold" : "",
+                l.KillLineNumber.HasValue ? l.KillLineNumber.Value.ToString() : "");
+        }
+
+        return table;
+    }
+
+    private static DataTable CreateSourceBreakdownTable(IReadOnlyList<SourceDamage> sources, long total)    {
+        var table = CreateTable("Source", "Total", "Direct", "Effect", "Hits", "%");
+
+        foreach (var src in sources)
+        {
+            var pct = total > 0 ? $"{src.TotalDamage * 100.0 / total:F1}%" : "0.0%";
+            table.Rows.Add(src.Source, src.TotalDamage, src.DirectDamage, src.EffectDamage, src.Hits, pct);
         }
 
         return table;
