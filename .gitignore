@@ -1,0 +1,5 @@
+bin/
+obj/
+
+# EverQuest logs can be large and may contain private chat.
+eqlog_*.txt
