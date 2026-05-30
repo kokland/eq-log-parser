@@ -509,12 +509,10 @@ public sealed class TerminalGuiDamageReportRenderer
             ? "Character: unknown    Server: unknown"
             : $"Character: {report.Identity.CharacterName}    Server: {report.Identity.ServerName}";
 
-        var xp     = report.Summary.Xp;
-        var solo   = xp.Where(x => !x.IsParty).Sum(x => x.Percent);
-        var party  = xp.Where(x =>  x.IsParty).Sum(x => x.Percent);
+        var xp = report.Summary.Xp;
         var xpLine = xp.Count == 0
             ? "XP: none"
-            : $"XP: {solo + party:F3}%  (solo: {solo:F3}% / {xp.Count(x => !x.IsParty)} gains    party: {party:F3}% / {xp.Count(x => x.IsParty)} gains)";
+            : FormatXpSummary(xp);
 
         return
             $"{identity}{Environment.NewLine}" +
@@ -523,11 +521,39 @@ public sealed class TerminalGuiDamageReportRenderer
             xpLine;
     }
 
+    private static string FormatXpSummary(IReadOnlyList<XpEvent> xp)
+    {
+        var (levels, progress) = ComputeXpProgress(xp);
+        var solo  = xp.Where(x => !x.IsParty).Sum(x => x.Percent);
+        var party = xp.Where(x =>  x.IsParty).Sum(x => x.Percent);
+        var levelStr = levels == 1 ? "1 level" : $"{levels} levels";
+        return $"XP: {levelStr} + {progress:F3}% toward next    " +
+               $"(solo: {solo:F3}% / {xp.Count(x => !x.IsParty)} gains    " +
+               $"party: {party:F3}% / {xp.Count(x => x.IsParty)} gains)";
+    }
+
     private static string XpFrameTitle(IReadOnlyList<XpEvent> xp)
     {
         if (xp.Count == 0) return "XP gains (none)";
-        var total = xp.Sum(x => x.Percent);
-        return $"XP gains ({xp.Count:N0})  total: {total:F3}%";
+        var (levels, progress) = ComputeXpProgress(xp);
+        return $"XP gains ({xp.Count:N0})    {levels} level{(levels == 1 ? "" : "s")} + {progress:F3}%";
+    }
+
+    /// <summary>
+    /// Processes XP events in chronological order.
+    /// Returns the number of full 100% levels accumulated and the
+    /// remaining progress (0–100) toward the next level.
+    /// </summary>
+    private static (int Levels, double Progress) ComputeXpProgress(IEnumerable<XpEvent> xp)
+    {
+        double acc = 0;
+        int levels = 0;
+        foreach (var ev in xp.OrderBy(x => x.LineNumber))
+        {
+            acc += ev.Percent;
+            while (acc >= 100.0) { levels++; acc -= 100.0; }
+        }
+        return (levels, acc);
     }
 
     private static DataTable CreateMobTotalsTable(IReadOnlyList<MobDamage> mobs)
@@ -569,15 +595,38 @@ public sealed class TerminalGuiDamageReportRenderer
 
     private static DataTable CreateXpTable(IEnumerable<XpEvent> events)
     {
-        var table = CreateTable("Line", "Time", "XP%", "Type");
+        var table = CreateTable("Line", "Time", "XP%", "Type", "Progress");
 
-        foreach (var ev in events)
+        // events arrives newest-first. Compute running level+progress in
+        // chronological order (oldest-first) so the Progress column reflects
+        // the true state after each gain.
+        var list = events.ToList();               // newest-first
+        var levelAfter    = new int[list.Count];
+        var progressAfter = new double[list.Count];
+        var leveledUp     = new bool[list.Count];
+
+        double acc = 0;
+        int lv = 0;
+        for (int i = list.Count - 1; i >= 0; i--)  // oldest → newest
         {
+            int prevLv = lv;
+            acc += list[i].Percent;
+            while (acc >= 100.0) { lv++; acc -= 100.0; }
+            levelAfter[i]    = lv;
+            progressAfter[i] = acc;
+            leveledUp[i]     = lv > prevLv;
+        }
+
+        for (int i = 0; i < list.Count; i++)
+        {
+            var ev   = list[i];
+            var type = (ev.IsParty ? "party" : "solo") + (leveledUp[i] ? " *** LEVEL UP" : "");
             table.Rows.Add(
                 ev.LineNumber,
                 ev.Timestamp,
                 $"{ev.Percent:F3}%",
-                ev.IsParty ? "party" : "solo");
+                type,
+                $"Lv {levelAfter[i]}  {progressAfter[i]:F3}%");
         }
 
         return table;
