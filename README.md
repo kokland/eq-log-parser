@@ -9,7 +9,14 @@ eqlog_CharacterName_ServerName.txt
 Run it from the repository root:
 
 ```powershell
-dotnet run --project EqLogParser\EqLogParser.csproj -- eqlog_Sika_test.txt
+dotnet run --project src\EqLogParser\EqLogParser.csproj -- eqlog_Sika_test.txt
+```
+
+The default report opens an interactive Terminal.Gui interface with scrollable tables.
+For plain console output, use:
+
+```powershell
+dotnet run --project src\EqLogParser\EqLogParser.csproj -- --text eqlog_Sika_test.txt
 ```
 
 The parser reports:
