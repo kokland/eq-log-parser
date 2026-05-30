@@ -73,29 +73,6 @@ public sealed class TerminalGuiDamageReportRenderer
             Text = "Tab switches panels. Arrow keys/PageUp/PageDown scroll tables. Esc exits. Use --text for plain output."
         };
 
-        var totalsTable = CreateTableView(CreateMobTotalsTable(report.Summary.Mobs));
-        var killsTable  = CreateTableView(CreateKillsTable(report.Summary.Kills));
-        var lootTable   = CreateTableView(CreateLootTable(report.Summary.Loot));
-
-        totalsFrame.Add(totalsTable);
-        killsFrame.Add(killsTable);
-        lootFrame.Add(lootTable);
-
-        // Tab moves focus between the left and right panels.
-        // +/- adjust the live-refresh interval (watch mode only).
-        // F opens a filter dialog to narrow tables by mob name.
-        // 1/2/3 toggle the totals/kills/loot panels.
-        // D opens a kill detail breakdown dialog.
-        bool showTotals = true;
-        bool showKills  = true;
-        bool showLoot   = true;
-        string currentFilter = string.Empty;
-        DamageReport lastReport = report;
-        // Tracks the kill rows currently visible in killsTable (respects active filter + sort).
-        IReadOnlyList<KillSummary> displayedKills = [];
-        object? timeoutToken = null;
-        var currentInterval = refreshInterval ?? TimeSpan.Zero;
-
         // Pre-sorted views of the full data set — rebuilt only when the report changes.
         // ApplyFilter filters from these; no re-sort needed inside ApplyFilter.
         List<KillSummary>   allKillsSorted = [];
@@ -120,6 +97,29 @@ public sealed class TerminalGuiDamageReportRenderer
         }
 
         RebuildCaches(report);
+
+        var totalsTable = CreateTableView(CreateMobTotalsTable(report.Summary.Mobs));
+        var killsTable  = CreateTableView(CreateKillsTable(allKillsSorted));
+        var lootTable   = CreateTableView(CreateLootTable(allLootSorted));
+
+        totalsFrame.Add(totalsTable);
+        killsFrame.Add(killsTable);
+        lootFrame.Add(lootTable);
+
+        // Tab moves focus between the left and right panels.
+        // +/- adjust the live-refresh interval (watch mode only).
+        // F opens a filter dialog to narrow tables by mob name.
+        // 1/2/3 toggle the totals/kills/loot panels.
+        // D opens a kill detail breakdown dialog.
+        bool showTotals = true;
+        bool showKills  = true;
+        bool showLoot   = true;
+        string currentFilter = string.Empty;
+        DamageReport lastReport = report;
+        // Tracks the kill rows currently visible in killsTable (respects active filter + sort).
+        IReadOnlyList<KillSummary> displayedKills = allKillsSorted;
+        object? timeoutToken = null;
+        var currentInterval = refreshInterval ?? TimeSpan.Zero;
 
         void UpdateLayout()
         {
