@@ -3,7 +3,7 @@ using EqLogParser.Domain;
 
 namespace EqLogParser.Parsing;
 
-public sealed partial class DeathLineParser
+public sealed partial class DeathLineParser : IDeathLineParser
 {
     /// <summary>
     /// Parses player-death lines: "You have been slain by X!"

@@ -3,7 +3,7 @@ using EqLogParser.Domain;
 
 namespace EqLogParser.Parsing;
 
-public sealed class XpLineParser
+public sealed class XpLineParser : IXpLineParser
 {
     // You gain experience! (4.401%)
     // You gain party experience! (2.094%)

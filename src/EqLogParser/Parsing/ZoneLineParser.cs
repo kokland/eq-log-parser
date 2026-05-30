@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace EqLogParser.Parsing;
 
-public sealed partial class ZoneLineParser
+public sealed partial class ZoneLineParser : IZoneLineParser
 {
     /// <summary>
     /// Parses zone-change lines: "You have entered ZoneName."

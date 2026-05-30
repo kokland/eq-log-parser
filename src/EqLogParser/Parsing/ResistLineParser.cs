@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace EqLogParser.Parsing;
 
-public sealed partial class ResistLineParser
+public sealed partial class ResistLineParser : IResistLineParser
 {
     /// <summary>
     /// Parses "X resisted your SpellName!" lines.

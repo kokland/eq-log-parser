@@ -3,7 +3,7 @@ using EqLogParser.Domain;
 
 namespace EqLogParser.Parsing;
 
-public sealed class LootLineParser
+public sealed class LootLineParser : ILootLineParser
 {
     // --You have looted a Torn Page of Magi`kot pg. 3 from a bloodthirsty ghoul's corpse.--
     private static readonly Regex KeptRegex = new(

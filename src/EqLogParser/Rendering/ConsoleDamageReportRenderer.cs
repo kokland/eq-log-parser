@@ -2,15 +2,42 @@ using EqLogParser.Domain;
 
 namespace EqLogParser.Rendering;
 
-public sealed class ConsoleDamageReportRenderer : IDamageReportRenderer
+public sealed class ConsoleDamageReportRenderer(TextWriter? output = null) : IDamageReportRenderer
 {
-    public void Render(DamageReport report, TextWriter output)
+    private readonly TextWriter _output = output ?? Console.Out;
+
+    public void Render(DamageReport report)
     {
-        WriteHeader(report, output);
-        WriteMobTotals(report.Summary.Mobs, output);
-        WriteKills(report.Summary.Kills, output);
-        WriteOpenEncounters(report.Summary.OpenEncounters, output);
+        WriteHeader(report, _output);
+        WriteMobTotals(report.Summary.Mobs, _output);
+        WriteKills(report.Summary.Kills, _output);
+        WriteOpenEncounters(report.Summary.OpenEncounters, _output);
     }
+
+    public void RenderWatch(
+        DamageReport       initialReport,
+        Func<DamageReport> refresh,
+        TimeSpan           interval,
+        CancellationToken  cancellationToken = default)
+    {
+        Render(initialReport);
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            _output.WriteLine();
+            _output.WriteLine($"Watching. Next refresh in {interval.TotalSeconds:N0}s. Press Ctrl+C to stop.");
+
+            if (cancellationToken.WaitHandle.WaitOne(interval))
+                break;
+
+            if (!Console.IsOutputRedirected)
+                Console.Clear();
+
+            Render(refresh());
+        }
+    }
+
+    // -------------------------------------------------------------------------
 
     private static void WriteHeader(DamageReport report, TextWriter output)
     {
@@ -47,10 +74,7 @@ public sealed class ConsoleDamageReportRenderer : IDamageReportRenderer
 
     private static void WriteKills(IReadOnlyList<KillSummary> kills, TextWriter output)
     {
-        if (kills.Count == 0)
-        {
-            return;
-        }
+        if (kills.Count == 0) return;
 
         output.WriteLine();
         output.WriteLine($"Individual kills: {kills.Count:N0}");
@@ -71,10 +95,7 @@ public sealed class ConsoleDamageReportRenderer : IDamageReportRenderer
 
     private static void WriteOpenEncounters(IReadOnlyList<MobDamage> openEncounters, TextWriter output)
     {
-        if (openEncounters.Count == 0)
-        {
-            return;
-        }
+        if (openEncounters.Count == 0) return;
 
         output.WriteLine();
         output.WriteLine($"Damage without a matching kill line: {openEncounters.Count:N0}");
@@ -90,12 +111,8 @@ public sealed class ConsoleDamageReportRenderer : IDamageReportRenderer
     }
 
     private static void WriteDamageTableHeader(
-        int mobWidth,
-        TextWriter output,
-        int totalWidth,
-        int directWidth,
-        int yourWidth,
-        int hitsWidth)
+        int mobWidth, TextWriter output,
+        int totalWidth, int directWidth, int yourWidth, int hitsWidth)
     {
         output.WriteLine(
             $"{ "Mob".PadRight(mobWidth) }  { "Total".PadLeft(totalWidth) }  { "Direct".PadLeft(directWidth) }  { "YOUR".PadLeft(yourWidth) }  { "Hits".PadLeft(hitsWidth) }");

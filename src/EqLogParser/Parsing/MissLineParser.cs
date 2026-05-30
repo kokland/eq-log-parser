@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace EqLogParser.Parsing;
 
-public sealed partial class MissLineParser
+public sealed partial class MissLineParser : IMissLineParser
 {
     /// <summary>
     /// Parses "You try to verb X, but miss!" lines.

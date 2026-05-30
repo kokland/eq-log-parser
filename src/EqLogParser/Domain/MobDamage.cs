@@ -13,20 +13,19 @@ public sealed class MobDamage(string name)
     public int Resists { get; private set; }
     public int Misses { get; private set; }
 
-    /// <summary>Timestamp string of the first damage hit on this mob (raw EQ format).</summary>
-    public string? FirstHitTimestamp { get; private set; }
+    /// <summary>Parsed timestamp of the first damage hit on this mob.</summary>
+    public DateTime? FirstHitTime { get; private set; }
 
-    /// <summary>Per-character damage contribution, sorted descending by total damage. Cached until the next Add call.</summary>
+    /// <summary>Per-source damage sorted descending by total. Cached until the next Add call.</summary>
     public IReadOnlyList<SourceDamage> BySource =>
         _bySourceSorted ??= _bySource.Values.OrderByDescending(s => s.TotalDamage).ToList();
 
-    public void Add(string source, int damage, DamageKind kind, string? timestamp = null, string? spellName = null)
+    public void Add(string source, int damage, DamageKind kind, DateTime? timestamp = null, string? spellName = null)
     {
         Hits++;
-        _bySourceSorted = null; // invalidate cache
+        _bySourceSorted = null;
 
-        if (FirstHitTimestamp is null && timestamp is not null)
-            FirstHitTimestamp = timestamp;
+        FirstHitTime ??= timestamp;
 
         if (kind == DamageKind.Direct)
             DirectDamage += damage;
@@ -41,4 +40,10 @@ public sealed class MobDamage(string name)
 
     public void AddResist() => Resists++;
     public void AddMiss()   => Misses++;
+
+    /// <summary>Creates an immutable snapshot of the current state.</summary>
+    public MobDamageSnapshot Snapshot() =>
+        new(Name, DirectDamage, YourEffectDamage, TotalDamage, Hits, Resists, Misses,
+            FirstHitTime,
+            BySource.Select(s => s.Snapshot()).ToList());
 }

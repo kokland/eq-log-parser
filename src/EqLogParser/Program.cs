@@ -32,9 +32,9 @@ rootCommand.Options.Add(intervalOption);
 
 rootCommand.SetAction(parseResult =>
 {
-    var logFile = parseResult.GetValue(logFileArgument);
-    var useTextReport = parseResult.GetValue(textOption);
-    var watch = parseResult.GetValue(watchOption);
+    var logFile         = parseResult.GetValue(logFileArgument);
+    var useTextReport   = parseResult.GetValue(textOption);
+    var watch           = parseResult.GetValue(watchOption);
     var intervalSeconds = parseResult.GetValue(intervalOption);
 
     return Run(logFile!, useTextReport, watch, TimeSpan.FromSeconds(intervalSeconds));
@@ -57,20 +57,11 @@ static int Run(FileInfo logFile, bool useTextReport, bool watch, TimeSpan refres
         return 1;
     }
 
-    var parser = new EqDamageParser(
-        new DamageLineParser(),
-        new KillLineParser(),
-        new MobNameNormalizer());
-
+    var parser         = new EqDamageParser(new DamageLineParser(), new KillLineParser(), new MobNameNormalizer());
     var identityParser = new LogIdentityParser();
-    DamageReport CreateReport()
-    {
-        return new DamageReport(
-            Path.GetFullPath(logPath),
-            identityParser.TryParse(logPath),
-            parser.Parse(logPath),
-            DateTimeOffset.Now);
-    }
+
+    DamageReport CreateReport() =>
+        new(Path.GetFullPath(logPath), identityParser.TryParse(logPath), parser.Parse(logPath), DateTimeOffset.Now);
 
     var report = CreateReport();
     if (!watch && report.Summary.TotalHits == 0)
@@ -79,63 +70,23 @@ static int Run(FileInfo logFile, bool useTextReport, bool watch, TimeSpan refres
         return 0;
     }
 
-    if (useTextReport || !CanRunTerminalUi())
-    {
-        RenderTextReport(report, CreateReport, watch, refreshInterval);
-        return 0;
-    }
+    IDamageReportRenderer renderer = (useTextReport || !CanRunTerminalUi())
+        ? new ConsoleDamageReportRenderer()
+        : new TerminalGuiDamageReportRenderer(ConfigStore.Default().Load());
 
-    var terminalRenderer = new TerminalGuiDamageReportRenderer(ConfigStore.Load());
     if (watch)
     {
-        terminalRenderer.Render(report, CreateReport, refreshInterval);
-        return 0;
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+        renderer.RenderWatch(report, CreateReport, refreshInterval, cts.Token);
+    }
+    else
+    {
+        renderer.Render(report);
     }
 
-    terminalRenderer.Render(report);
     return 0;
 }
 
-static void RenderTextReport(
-    DamageReport report,
-    Func<DamageReport> refreshReport,
-    bool watch,
-    TimeSpan refreshInterval)
-{
-    var renderer = new ConsoleDamageReportRenderer();
-
-    if (!watch)
-    {
-        renderer.Render(report, Console.Out);
-        return;
-    }
-
-    using var cancellation = new CancellationTokenSource();
-    Console.CancelKeyPress += (_, eventArgs) =>
-    {
-        eventArgs.Cancel = true;
-        cancellation.Cancel();
-    };
-
-    while (!cancellation.IsCancellationRequested)
-    {
-        if (!Console.IsOutputRedirected)
-        {
-            Console.Clear();
-        }
-
-        renderer.Render(refreshReport(), Console.Out);
-        Console.WriteLine();
-        Console.WriteLine($"Watching. Next refresh in {refreshInterval.TotalSeconds:N0}s. Press Ctrl+C to stop.");
-
-        if (cancellation.Token.WaitHandle.WaitOne(refreshInterval))
-        {
-            break;
-        }
-    }
-}
-
-static bool CanRunTerminalUi()
-{
-    return !Console.IsInputRedirected && !Console.IsOutputRedirected;
-}
+static bool CanRunTerminalUi() =>
+    !Console.IsInputRedirected && !Console.IsOutputRedirected;

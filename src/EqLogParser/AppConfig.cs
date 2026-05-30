@@ -13,10 +13,9 @@ public sealed class AppConfig
     public bool ShowXp               { get; set; } = true;
 }
 
-public static class ConfigStore
+public sealed class ConfigStore : IConfigStore
 {
-    private static readonly string ConfigPath =
-        Path.Combine(Directory.GetCurrentDirectory(), "eqparser.json");
+    private readonly string _configPath;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -24,13 +23,22 @@ public static class ConfigStore
         DefaultIgnoreCondition = JsonIgnoreCondition.Never
     };
 
-    public static AppConfig Load()
+    public ConfigStore(string configPath)
+    {
+        _configPath = configPath;
+    }
+
+    /// <summary>Creates a store rooted in the current working directory.</summary>
+    public static ConfigStore Default() =>
+        new(Path.Combine(Directory.GetCurrentDirectory(), "eqparser.json"));
+
+    public AppConfig Load()
     {
         try
         {
-            if (File.Exists(ConfigPath))
+            if (File.Exists(_configPath))
             {
-                var json = File.ReadAllText(ConfigPath);
+                var json = File.ReadAllText(_configPath);
                 return JsonSerializer.Deserialize<AppConfig>(json, JsonOptions) ?? new AppConfig();
             }
         }
@@ -42,12 +50,12 @@ public static class ConfigStore
         return new AppConfig();
     }
 
-    public static void Save(AppConfig config)
+    public void Save(AppConfig config)
     {
         try
         {
             var json = JsonSerializer.Serialize(config, JsonOptions);
-            File.WriteAllText(ConfigPath, json);
+            File.WriteAllText(_configPath, json);
         }
         catch
         {

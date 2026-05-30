@@ -4,7 +4,7 @@ using EqLogParser.Domain;
 
 namespace EqLogParser.Parsing;
 
-public sealed partial class HealLineParser
+public sealed partial class HealLineParser : IHealLineParser
 {
     /// <summary>
     /// Parses YOU-sourced heal lines:

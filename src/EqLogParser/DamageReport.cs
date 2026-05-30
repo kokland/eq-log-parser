@@ -1,6 +1,6 @@
 using EqLogParser.Domain;
 
-namespace EqLogParser.Rendering;
+namespace EqLogParser;
 
 public sealed record DamageReport(
     string LogPath,

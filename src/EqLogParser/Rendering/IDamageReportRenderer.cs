@@ -2,5 +2,11 @@ namespace EqLogParser.Rendering;
 
 public interface IDamageReportRenderer
 {
-    void Render(DamageReport report, TextWriter output);
+    void Render(DamageReport report);
+
+    void RenderWatch(
+        DamageReport          initialReport,
+        Func<DamageReport>    refresh,
+        TimeSpan              interval,
+        CancellationToken     cancellationToken = default);
 }
