@@ -8,8 +8,10 @@ using Terminal.Gui.Views;
 
 namespace EqLogParser.Rendering;
 
-public sealed class TerminalGuiDamageReportRenderer
+public sealed class TerminalGuiDamageReportRenderer(AppConfig config)
 {
+    public TerminalGuiDamageReportRenderer() : this(new AppConfig()) { }
+
     public void Render(DamageReport report)
     {
         Render(report, refreshReport: null, refreshInterval: null);
@@ -64,10 +66,19 @@ public sealed class TerminalGuiDamageReportRenderer
             Height = Dim.Fill(1)
         };
 
+        var sessionsFrame = new FrameView
+        {
+            Title = SessionsFrameTitle(report.Summary.Sessions),
+            X = Pos.Right(lootFrame),
+            Y = Pos.Bottom(header),
+            Width = Dim.Fill(),
+            Height = Dim.Fill(1)
+        };
+
         var xpFrame = new FrameView
         {
             Title = XpFrameTitle(report.Summary.Xp),
-            X = Pos.Right(lootFrame),
+            X = Pos.Right(sessionsFrame),
             Y = Pos.Bottom(header),
             Width = Dim.Fill(),
             Height = Dim.Fill(1)
@@ -83,18 +94,19 @@ public sealed class TerminalGuiDamageReportRenderer
         };
 
         // Pre-sorted views of the full data set — rebuilt only when the report changes.
-        // ApplyFilter filters from these; no re-sort needed inside ApplyFilter.
-        List<KillSummary>   allKillsSorted = [];
-        List<LootSummary>   allLootSorted  = [];
-        List<XpEvent>       allXpSorted    = [];
+        List<KillSummary>     allKillsSorted    = [];
+        List<LootSummary>     allLootSorted     = [];
+        List<XpEvent>         allXpSorted       = [];
+        List<SessionSummary>  allSessionsSorted = [];
         // Kill line number → loot items for that kill; rebuilt with the report.
         Dictionary<int, List<LootSummary>> lootByKillLine = [];
 
         void RebuildCaches(DamageReport r)
         {
-            allKillsSorted = r.Summary.Kills.OrderByDescending(k => k.LineNumber).ToList();
-            allLootSorted  = r.Summary.Loot.OrderByDescending(l => l.LineNumber).ToList();
-            allXpSorted    = r.Summary.Xp.OrderByDescending(x => x.LineNumber).ToList();
+            allKillsSorted    = r.Summary.Kills   .OrderByDescending(k => k.LineNumber).ToList();
+            allLootSorted     = r.Summary.Loot    .OrderByDescending(l => l.LineNumber).ToList();
+            allXpSorted       = r.Summary.Xp      .OrderByDescending(x => x.LineNumber).ToList();
+            allSessionsSorted = r.Summary.Sessions .OrderByDescending(s => s.Number).ToList();
             lootByKillLine = [];
             foreach (var l in r.Summary.Loot)
             {
@@ -109,56 +121,74 @@ public sealed class TerminalGuiDamageReportRenderer
 
         RebuildCaches(report);
 
-        var totalsTable = CreateTableView(CreateMobTotalsTable(report.Summary.Mobs));
-        var killsTable  = CreateTableView(CreateKillsTable(allKillsSorted));
-        var lootTable   = CreateTableView(CreateLootTable(allLootSorted));
-        var xpTable     = CreateTableView(CreateXpTable(allXpSorted));
+        var totalsTable   = CreateTableView(CreateMobTotalsTable(report.Summary.Mobs));
+        var killsTable    = CreateTableView(CreateKillsTable(allKillsSorted));
+        var lootTable     = CreateTableView(CreateLootTable(allLootSorted));
+        var sessionsTable = CreateTableView(CreateSessionsTable(allSessionsSorted));
+        var xpTable       = CreateTableView(CreateXpTable(allXpSorted));
 
         totalsFrame.Add(totalsTable);
         killsFrame.Add(killsTable);
         lootFrame.Add(lootTable);
+        sessionsFrame.Add(sessionsTable);
         xpFrame.Add(xpTable);
 
         // Tab moves focus between panels.
         // +/- adjust the live-refresh interval (watch mode only).
         // F opens a filter dialog to narrow tables by mob name.
-        // 1/2/3/4 toggle the totals/kills/loot/xp panels.
+        // 1/2/3/4/5 toggle the totals/kills/loot/sessions/xp panels.
         // D opens a kill detail breakdown dialog.
-        bool showTotals = true;
-        bool showKills  = true;
-        bool showLoot   = true;
-        bool showXp     = true;
+        bool showTotals   = config.ShowTotals;
+        bool showKills    = config.ShowKills;
+        bool showLoot     = config.ShowLoot;
+        bool showSessions = config.ShowSessions;
+        bool showXp       = config.ShowXp;
         string currentFilter = string.Empty;
         DamageReport lastReport = report;
-        // Tracks the kill rows currently visible in killsTable (respects active filter + sort).
         IReadOnlyList<KillSummary> displayedKills = allKillsSorted;
         object? timeoutToken = null;
-        var currentInterval = refreshInterval ?? TimeSpan.Zero;
+        // Prefer saved interval; fall back to command-line value.
+        var currentInterval = refreshInterval.HasValue
+            ? TimeSpan.FromSeconds(Math.Max((int)refreshInterval.Value.TotalSeconds, config.WatchIntervalSeconds > 0 ? config.WatchIntervalSeconds : 30))
+            : TimeSpan.Zero;
+        // Override: if a command-line interval was provided explicitly, honour it.
+        if (refreshInterval.HasValue)
+            currentInterval = refreshInterval.Value;
+
+        void SaveConfig()
+        {
+            config.ShowTotals   = showTotals;
+            config.ShowKills    = showKills;
+            config.ShowLoot     = showLoot;
+            config.ShowSessions = showSessions;
+            config.ShowXp       = showXp;
+            if (refreshReport is not null)
+                config.WatchIntervalSeconds = (int)currentInterval.TotalSeconds;
+            ConfigStore.Save(config);
+        }
 
         void UpdateLayout()
         {
-            // Determine which panels are visible.
-            var visible = new List<FrameView>(4);
-            if (showTotals) visible.Add(totalsFrame);
-            if (showKills)  visible.Add(killsFrame);
-            if (showLoot)   visible.Add(lootFrame);
-            if (showXp)     visible.Add(xpFrame);
+            var visible = new List<FrameView>(5);
+            if (showTotals)   visible.Add(totalsFrame);
+            if (showKills)    visible.Add(killsFrame);
+            if (showLoot)     visible.Add(lootFrame);
+            if (showSessions) visible.Add(sessionsFrame);
+            if (showXp)       visible.Add(xpFrame);
 
-            // If all hidden, reset to all visible.
             if (visible.Count == 0)
             {
-                showTotals = showKills = showLoot = showXp = true;
+                showTotals = showKills = showLoot = showSessions = showXp = true;
                 UpdateLayout();
                 return;
             }
 
-            // Hide panels not in the visible list.
-            totalsFrame.Visible = showTotals;
-            killsFrame.Visible  = showKills;
-            lootFrame.Visible   = showLoot;
-            xpFrame.Visible     = showXp;
+            totalsFrame.Visible   = showTotals;
+            killsFrame.Visible    = showKills;
+            lootFrame.Visible     = showLoot;
+            sessionsFrame.Visible = showSessions;
+            xpFrame.Visible       = showXp;
 
-            // Lay out visible panels as equal-width columns.
             int pct = 100 / visible.Count;
             for (int i = 0; i < visible.Count; i++)
             {
@@ -192,32 +222,36 @@ public sealed class TerminalGuiDamageReportRenderer
             if (string.IsNullOrWhiteSpace(filter))
             {
                 filteredMobs  = r.Summary.Mobs;
-                filteredKills = allKillsSorted;   // already sorted descending
-                filteredLoot  = allLootSorted;    // already sorted descending
+                filteredKills = allKillsSorted;
+                filteredLoot  = allLootSorted;
             }
             else
             {
                 filteredMobs  = r.Summary.Mobs .Where(m => m.Name     .Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
                 filteredKills = allKillsSorted  .Where(k => k.Mob.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
                 filteredLoot  = allLootSorted   .Where(l => l.MobName .Contains(filter, StringComparison.OrdinalIgnoreCase)
-                                                          || l.ItemName.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+                                                           || l.ItemName.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
             }
 
             displayedKills = filteredKills;
-            killsFrame.Title = $"Individual kills ({filteredKills.Count:N0})";
-            lootFrame.Title  = $"Loot ({filteredLoot.Count:N0})";
-            totalsTable.Table = new DataTableSource(CreateMobTotalsTable(filteredMobs));
-            killsTable.Table  = new DataTableSource(CreateKillsTable(filteredKills));
-            lootTable.Table   = new DataTableSource(CreateLootTable(filteredLoot));
-            // XP events have no mob name — always show the full sorted list.
-            xpTable.Table     = new DataTableSource(CreateXpTable(allXpSorted));
-            xpFrame.Title     = XpFrameTitle(r.Summary.Xp);
+            killsFrame.Title    = $"Individual kills ({filteredKills.Count:N0})";
+            lootFrame.Title     = $"Loot ({filteredLoot.Count:N0})";
+            totalsTable.Table   = new DataTableSource(CreateMobTotalsTable(filteredMobs));
+            killsTable.Table    = new DataTableSource(CreateKillsTable(filteredKills));
+            lootTable.Table     = new DataTableSource(CreateLootTable(filteredLoot));
+            // Sessions and XP are not filtered by mob name.
+            sessionsTable.Table = new DataTableSource(CreateSessionsTable(allSessionsSorted));
+            xpTable.Table       = new DataTableSource(CreateXpTable(allXpSorted));
+            sessionsFrame.Title = SessionsFrameTitle(r.Summary.Sessions);
+            xpFrame.Title       = XpFrameTitle(r.Summary.Xp);
             totalsTable.SetNeedsDraw();
             killsTable.SetNeedsDraw();
             lootTable.SetNeedsDraw();
+            sessionsTable.SetNeedsDraw();
             xpTable.SetNeedsDraw();
             killsFrame.SetNeedsDraw();
             lootFrame.SetNeedsDraw();
+            sessionsFrame.SetNeedsDraw();
             xpFrame.SetNeedsDraw();
         }
 
@@ -238,11 +272,12 @@ public sealed class TerminalGuiDamageReportRenderer
                 {
                     RebuildCaches(lastReport);
                     ApplyFilter(lastReport, currentFilter);
+                    sessionsFrame.Title = SessionsFrameTitle(lastReport.Summary.Sessions);
+                    sessionsFrame.SetNeedsDraw();
                     xpFrame.Title = XpFrameTitle(lastReport.Summary.Xp);
                     xpFrame.SetNeedsDraw();
                 }
 
-                // Return false — we reschedule manually so we always use currentInterval.
                 ScheduleRefresh();
                 return false;
             });
@@ -253,19 +288,19 @@ public sealed class TerminalGuiDamageReportRenderer
             var filterTag = string.IsNullOrWhiteSpace(currentFilter)
                 ? ""
                 : $" [filter: \"{currentFilter}\"]";
-            var hidden = new List<string>(4);
-            if (!showTotals) hidden.Add("totals");
-            if (!showKills)  hidden.Add("kills");
-            if (!showLoot)   hidden.Add("loot");
-            if (!showXp)     hidden.Add("xp");
+            var hidden = new List<string>(5);
+            if (!showTotals)   hidden.Add("totals");
+            if (!showKills)    hidden.Add("kills");
+            if (!showLoot)     hidden.Add("loot");
+            if (!showSessions) hidden.Add("sessions");
+            if (!showXp)       hidden.Add("xp");
             var viewTag = hidden.Count > 0 ? $" [hidden: {string.Join(", ", hidden)}]" : "";
             footer.Text = refreshReport is not null
-                ? $"Live every {currentInterval.TotalSeconds:N0}s (+/- change). F filter{filterTag}. 1/2/3/4 panels{viewTag}. D detail. Tab/Arrow/PgUp/PgDn. Esc exits."
-                : $"F filter{filterTag}. 1/2/3/4 panels{viewTag}. D detail (kills panel). Tab/Arrow/PgUp/PgDn. Esc. --text plain.";
+                ? $"Live every {currentInterval.TotalSeconds:N0}s (+/- change). F filter{filterTag}. 1-5 panels{viewTag}. D detail. Tab/Arrow/PgUp/PgDn. Esc exits."
+                : $"F filter{filterTag}. 1-5 panels{viewTag}. D detail (kills panel). Tab/Arrow/PgUp/PgDn. Esc. --text plain.";
             footer.SetNeedsDraw();
         }
 
-        // Guard so our app-level handler doesn't re-fire while a modal is already open.
         bool modalActive = false;
 
         void OpenFilterDialog()
@@ -292,8 +327,6 @@ public sealed class TerminalGuiDamageReportRenderer
                 Width = Dim.Fill(2)
             };
 
-            // Live preview: debounced so a DataTable rebuild fires at most once per 150 ms
-            // rather than on every individual keystroke.
             object? filterDebounceToken = null;
             textField.TextChanged += (_, _) =>
             {
@@ -322,12 +355,10 @@ public sealed class TerminalGuiDamageReportRenderer
             }
             else
             {
-                // Restore the previous filter if the user cancelled.
                 ApplyFilter(lastReport, savedFilter);
             }
         }
 
-        // Use app.Keyboard.KeyDown (application-scoped, fires before any view sees the key)
         void OpenKillDetailDialog(KillSummary kill)
         {
             var sources  = kill.Mob.BySource;
@@ -339,7 +370,6 @@ public sealed class TerminalGuiDamageReportRenderer
             var maxDamage  = sources.Count > 0 ? sources.Max(s => s.TotalDamage) : 1L;
             const int BarWidth = 22;
 
-            // Text bar chart
             var sb = new System.Text.StringBuilder();
             foreach (var src in sources)
             {
@@ -362,13 +392,12 @@ public sealed class TerminalGuiDamageReportRenderer
             };
 
             View lastAdded = dialog;
-            int  lastY     = 1;
 
             if (sources.Count > 0)
             {
                 var detailTable = new TableView(new DataTableSource(CreateSourceBreakdownTable(sources, total)))
                 {
-                    X = 1, Y = lastY,
+                    X = 1, Y = 1,
                     Width = Dim.Fill(1),
                     Height = tableRows,
                     FullRowSelect = true
@@ -385,7 +414,6 @@ public sealed class TerminalGuiDamageReportRenderer
                 };
                 dialog.Add(barLabel);
                 lastAdded = barLabel;
-                lastY     = 0; // unused when using Pos.Bottom
             }
 
             if (killLoot.Count > 0)
@@ -394,7 +422,7 @@ public sealed class TerminalGuiDamageReportRenderer
                 {
                     Text   = $"Loot ({killLoot.Count}):",
                     X      = 1,
-                    Y      = sources.Count > 0 ? Pos.Bottom(lastAdded) + 1 : lastY,
+                    Y      = sources.Count > 0 ? Pos.Bottom(lastAdded) + 1 : 1,
                     Width  = Dim.Fill(1),
                     Height = 1
                 };
@@ -419,9 +447,8 @@ public sealed class TerminalGuiDamageReportRenderer
 
             if (e.KeyCode == KeyCode.Tab)
             {
-                // Cycle focus through visible panels in order: totals -> kills -> loot -> xp -> totals
-                TableView[] cycle = [totalsTable, killsTable, lootTable, xpTable];
-                bool[] shown      = [showTotals, showKills, showLoot, showXp];
+                TableView[] cycle = [totalsTable, killsTable, lootTable, sessionsTable, xpTable];
+                bool[] shown      = [showTotals, showKills, showLoot, showSessions, showXp];
                 int current = Array.FindIndex(cycle, t => t.HasFocus);
                 for (int i = 1; i <= cycle.Length; i++)
                 {
@@ -454,14 +481,16 @@ public sealed class TerminalGuiDamageReportRenderer
                 return;
             }
 
-            if (e.AsRune.Value is '1' or '2' or '3' or '4')
+            if (e.AsRune.Value is '1' or '2' or '3' or '4' or '5')
             {
-                if      (e.AsRune.Value == '1') showTotals = !showTotals;
-                else if (e.AsRune.Value == '2') showKills  = !showKills;
-                else if (e.AsRune.Value == '3') showLoot   = !showLoot;
-                else                            showXp     = !showXp;
+                if      (e.AsRune.Value == '1') showTotals   = !showTotals;
+                else if (e.AsRune.Value == '2') showKills    = !showKills;
+                else if (e.AsRune.Value == '3') showLoot     = !showLoot;
+                else if (e.AsRune.Value == '4') showSessions = !showSessions;
+                else                            showXp       = !showXp;
                 UpdateLayout();
                 UpdateFooter();
+                SaveConfig();
                 e.Handled = true;
                 return;
             }
@@ -477,6 +506,7 @@ public sealed class TerminalGuiDamageReportRenderer
 
                 ScheduleRefresh();
                 UpdateFooter();
+                SaveConfig();
                 e.Handled = true;
             }
         };
@@ -487,7 +517,7 @@ public sealed class TerminalGuiDamageReportRenderer
             ScheduleRefresh();
         }
 
-        window.Add(header, totalsFrame, killsFrame, lootFrame, xpFrame, footer);
+        window.Add(header, totalsFrame, killsFrame, lootFrame, sessionsFrame, xpFrame, footer);
         app.Run(window);
     }
 
@@ -539,11 +569,12 @@ public sealed class TerminalGuiDamageReportRenderer
         return $"XP gains ({xp.Count:N0})    {levels} level{(levels == 1 ? "" : "s")} + {progress:F3}%";
     }
 
-    /// <summary>
-    /// Processes XP events in chronological order.
-    /// Returns the number of full 100% levels accumulated and the
-    /// remaining progress (0–100) toward the next level.
-    /// </summary>
+    private static string SessionsFrameTitle(IReadOnlyList<SessionSummary> sessions)
+    {
+        if (sessions.Count == 0) return "Sessions (none)";
+        return $"Sessions ({sessions.Count})";
+    }
+
     private static (int Levels, double Progress) ComputeXpProgress(IEnumerable<XpEvent> xp)
     {
         double acc = 0;
@@ -593,13 +624,37 @@ public sealed class TerminalGuiDamageReportRenderer
         return table;
     }
 
+    private static DataTable CreateSessionsTable(IReadOnlyList<SessionSummary> sessions)
+    {
+        var table = CreateTable("#", "Start", "End", "Duration", "Kills", "Loot", "Damage", "XP%");
+
+        foreach (var s in sessions)
+        {
+            table.Rows.Add(
+                s.Number,
+                s.StartTime.ToString("MM/dd HH:mm"),
+                s.EndTime.ToString("MM/dd HH:mm"),
+                FormatDuration(s.Duration),
+                s.KillCount,
+                s.LootCount,
+                s.TotalDamage,
+                $"{s.XpPercent:F3}%");
+        }
+
+        return table;
+    }
+
+    private static string FormatDuration(TimeSpan ts)
+    {
+        if (ts.TotalHours >= 1)
+            return $"{(int)ts.TotalHours}h {ts.Minutes:D2}m";
+        return $"{ts.Minutes}m {ts.Seconds:D2}s";
+    }
+
     private static DataTable CreateXpTable(IEnumerable<XpEvent> events)
     {
         var table = CreateTable("Line", "Time", "XP%", "Type", "Progress");
 
-        // events arrives newest-first. Compute running level+progress in
-        // chronological order (oldest-first) so the Progress column reflects
-        // the true state after each gain.
         var list = events.ToList();               // newest-first
         var levelAfter    = new int[list.Count];
         var progressAfter = new double[list.Count];

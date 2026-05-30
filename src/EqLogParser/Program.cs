@@ -1,4 +1,5 @@
 using System.CommandLine;
+using EqLogParser;
 using EqLogParser.Parsing;
 using EqLogParser.Rendering;
 
@@ -84,7 +85,7 @@ static int Run(FileInfo logFile, bool useTextReport, bool watch, TimeSpan refres
         return 0;
     }
 
-    var terminalRenderer = new TerminalGuiDamageReportRenderer();
+    var terminalRenderer = new TerminalGuiDamageReportRenderer(ConfigStore.Load());
     if (watch)
     {
         terminalRenderer.Render(report, CreateReport, refreshInterval);

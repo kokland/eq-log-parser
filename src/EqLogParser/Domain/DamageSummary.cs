@@ -6,5 +6,6 @@ public sealed record DamageSummary(
     IReadOnlyList<MobDamage> OpenEncounters,
     IReadOnlyList<LootSummary> Loot,
     IReadOnlyList<XpEvent> Xp,
+    IReadOnlyList<SessionSummary> Sessions,
     long TotalDamage,
     long TotalHits);

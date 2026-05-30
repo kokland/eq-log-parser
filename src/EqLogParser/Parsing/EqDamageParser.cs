@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using EqLogParser.Domain;
 
@@ -9,6 +10,17 @@ public sealed class EqDamageParser(
     IMobNameNormalizer mobNameNormalizer) : IEqDamageParser
 {
     private static readonly StringComparer MobNameComparer = StringComparer.OrdinalIgnoreCase;
+
+    // Two formats for EQ timestamps: 2-digit vs space-padded 1-digit day.
+    private static readonly string[] TimestampFormats =
+    [
+        "ddd MMM dd HH:mm:ss yyyy",
+        "ddd MMM  d HH:mm:ss yyyy"
+    ];
+
+    /// <summary>Gap larger than this between consecutive timestamped lines starts a new session.</summary>
+    public TimeSpan SessionIdleThreshold { get; set; } = TimeSpan.FromMinutes(30);
+
     private readonly LootLineParser lootLineParser = new();
     private readonly XpLineParser   xpLineParser   = new();
 
@@ -18,6 +30,11 @@ public sealed class EqDamageParser(
     private readonly List<KillSummary>              _kills            = [];
     private readonly List<LootEvent>                _lootEvents       = [];
     private readonly List<XpEvent>                  _xpEvents         = [];
+    // Session boundary tracking: list of (startLine, startTime) for each detected session start.
+    private readonly List<(int StartLine, DateTime StartTime)> _sessionStarts = [];
+    private readonly List<(int EndLine, DateTime EndTime)>     _sessionEnds   = [];
+    private DateTime _lastLineTime = DateTime.MinValue;
+    private int  _lastLineNumber = 0;
     private int  _lineNumber  = 0;
     private long _byteOffset  = 0;
 
@@ -43,10 +60,11 @@ public sealed class EqDamageParser(
                 _lineNumber++;
                 var line = EqLogLine.FromText(_lineNumber, text);
 
+                TrackSession(line);
                 if (TrackDamage(line))  continue;
-            if (TrackKill(line))    continue;
-            if (TrackLoot(line))    continue;
-            TrackXp(line);
+                if (TrackKill(line))    continue;
+                if (TrackLoot(line))    continue;
+                TrackXp(line);
             }
         }
 
@@ -88,6 +106,10 @@ public sealed class EqDamageParser(
         _kills.Clear();
         _lootEvents.Clear();
         _xpEvents.Clear();
+        _sessionStarts.Clear();
+        _sessionEnds.Clear();
+        _lastLineTime = DateTime.MinValue;
+        _lastLineNumber = 0;
         _lineNumber = 0;
         _byteOffset = 0;
     }
@@ -133,11 +155,96 @@ public sealed class EqDamageParser(
         _xpEvents.Add(xp with { LineNumber = line.Number, Timestamp = line.Timestamp });
     }
 
+    private void TrackSession(EqLogLine line)
+    {
+        if (!TryParseTimestamp(line.Timestamp, out var ts)) return;
+
+        if (_lastLineTime == DateTime.MinValue)
+        {
+            // First timestamped line — start session 1.
+            _sessionStarts.Add((line.Number, ts));
+        }
+        else if (ts - _lastLineTime > SessionIdleThreshold)
+        {
+            // Close the previous session at the last known line/time.
+            _sessionEnds.Add((_lastLineNumber, _lastLineTime));
+            // Open a new session.
+            _sessionStarts.Add((line.Number, ts));
+        }
+
+        _lastLineTime   = ts;
+        _lastLineNumber = line.Number;
+    }
+
+    private IReadOnlyList<SessionSummary> BuildSessions(IReadOnlyList<LootSummary> loot)
+    {
+        if (_sessionStarts.Count == 0) return [];
+
+        // Close the final open session.
+        var starts = _sessionStarts;
+        var ends   = new List<(int EndLine, DateTime EndTime)>(_sessionEnds) { (_lastLineNumber, _lastLineTime) };
+
+        // Ensure we have matching pairs (defensive).
+        int count = Math.Min(starts.Count, ends.Count);
+        var result = new List<SessionSummary>(count);
+
+        for (int i = 0; i < count; i++)
+        {
+            var (startLine, startTime) = starts[i];
+            var (endLine,   endTime)   = ends[i];
+
+            var killCount  = _kills   .Count(k => k.LineNumber  >= startLine && k.LineNumber  <= endLine);
+            var lootCount  = loot      .Count(l => l.LineNumber  >= startLine && l.LineNumber  <= endLine);
+            var xpPercent  = _xpEvents .Where(x => x.LineNumber >= startLine && x.LineNumber  <= endLine)
+                                        .Sum(x => x.Percent);
+
+            // Sum damage for kills that fall within the session.
+            var sessionKillLines = new HashSet<int>(
+                _kills.Where(k => k.LineNumber >= startLine && k.LineNumber <= endLine)
+                      .Select(k => k.LineNumber));
+
+            // Damage that is credited to kills within this session via BySource.
+            // We use KillSummary.Mob.TotalDamage for simplicity (matches kills panel).
+            long totalDamage = _kills
+                .Where(k => k.LineNumber >= startLine && k.LineNumber <= endLine)
+                .Sum(k => k.Mob.TotalDamage);
+
+            result.Add(new SessionSummary(
+                Number:      i + 1,
+                StartLine:   startLine,
+                EndLine:     endLine,
+                StartTime:   startTime,
+                EndTime:     endTime,
+                KillCount:   killCount,
+                LootCount:   lootCount,
+                TotalDamage: totalDamage,
+                XpPercent:   xpPercent));
+        }
+
+        // Newest first.
+        result.Reverse();
+        return result.AsReadOnly();
+    }
+
+    private static bool TryParseTimestamp(string? raw, out DateTime result)
+    {
+        if (raw is not null &&
+            DateTime.TryParseExact(raw, TimestampFormats,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out result))
+            return true;
+
+        result = default;
+        return false;
+    }
+
     private DamageSummary BuildSummary()
     {
         var mobs           = OrderByDamage(_totals.Values);
         var openEncounters = OrderByDamage(_activeEncounters.Values);
         var loot           = LinkLoot(_lootEvents, _kills);
+        var sessions       = BuildSessions(loot);
 
         return new DamageSummary(
             mobs,
@@ -145,6 +252,7 @@ public sealed class EqDamageParser(
             openEncounters,
             loot,
             _xpEvents.AsReadOnly(),
+            sessions,
             mobs.Sum(m => m.TotalDamage),
             mobs.Sum(m => m.Hits));
     }
