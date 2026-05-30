@@ -1,83 +1,70 @@
+using System.CommandLine;
 using EqLogParser.Parsing;
 using EqLogParser.Rendering;
 
-var options = CommandLineOptions.Parse(args);
-if (options is null)
+var logFileArgument = new Argument<FileInfo>("log-file")
 {
-    Console.Error.WriteLine("Usage: EqLogParser [--text|--no-tui] <path-to-eq-log>");
-    return 1;
-}
+    Description = "EverQuest log file named like eqlog_CharacterName_ServerName.txt"
+};
 
-var logPath = options.LogPath;
-if (!File.Exists(logPath))
+var textOption = new Option<bool>("--text", "--no-tui")
 {
-    Console.Error.WriteLine($"Log file not found: {logPath}");
-    return 1;
-}
+    Description = "Write a plain text report instead of opening the Terminal.Gui interface."
+};
 
-var parser = new EqDamageParser(
-    new DamageLineParser(),
-    new KillLineParser(),
-    new MobNameNormalizer());
+var rootCommand = new RootCommand("Parse EverQuest logs and report outgoing damage by mob and kill.");
+rootCommand.Arguments.Add(logFileArgument);
+rootCommand.Options.Add(textOption);
 
-var identityParser = new LogIdentityParser();
-
-var summary = parser.Parse(logPath);
-if (summary.TotalHits == 0)
+rootCommand.SetAction(parseResult =>
 {
-    Console.WriteLine("No outgoing player damage was found.");
+    var logFile = parseResult.GetValue(logFileArgument);
+    var useTextReport = parseResult.GetValue(textOption);
+
+    return Run(logFile!, useTextReport);
+});
+
+return rootCommand.Parse(args).Invoke();
+
+static int Run(FileInfo logFile, bool useTextReport)
+{
+    var logPath = logFile.FullName;
+    if (!logFile.Exists)
+    {
+        Console.Error.WriteLine($"Log file not found: {logPath}");
+        return 1;
+    }
+
+    var parser = new EqDamageParser(
+        new DamageLineParser(),
+        new KillLineParser(),
+        new MobNameNormalizer());
+
+    var identityParser = new LogIdentityParser();
+
+    var summary = parser.Parse(logPath);
+    if (summary.TotalHits == 0)
+    {
+        Console.WriteLine("No outgoing player damage was found.");
+        return 0;
+    }
+
+    var report = new DamageReport(
+        Path.GetFullPath(logPath),
+        identityParser.TryParse(logPath),
+        summary);
+
+    if (useTextReport || !CanRunTerminalUi())
+    {
+        new ConsoleDamageReportRenderer().Render(report, Console.Out);
+        return 0;
+    }
+
+    new TerminalGuiDamageReportRenderer().Render(report);
     return 0;
 }
-
-var report = new DamageReport(
-    Path.GetFullPath(logPath),
-    identityParser.TryParse(logPath),
-    summary);
-
-if (options.UseTextReport || !CanRunTerminalUi())
-{
-    new ConsoleDamageReportRenderer().Render(report, Console.Out);
-    return 0;
-}
-
-new TerminalGuiDamageReportRenderer().Render(report);
-return 0;
 
 static bool CanRunTerminalUi()
 {
     return !Console.IsInputRedirected && !Console.IsOutputRedirected;
-}
-
-internal sealed record CommandLineOptions(string LogPath, bool UseTextReport)
-{
-    public static CommandLineOptions? Parse(string[] args)
-    {
-        if (args.Length is 0 or > 2)
-        {
-            return null;
-        }
-
-        var useTextReport = false;
-        string? logPath = null;
-
-        foreach (var arg in args)
-        {
-            if (arg is "--text" or "--no-tui")
-            {
-                useTextReport = true;
-                continue;
-            }
-
-            if (logPath is not null)
-            {
-                return null;
-            }
-
-            logPath = arg;
-        }
-
-        return logPath is null
-            ? null
-            : new CommandLineOptions(logPath, useTextReport);
-    }
 }
