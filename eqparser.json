@@ -4,5 +4,6 @@
   "ShowKills": true,
   "ShowLoot": false,
   "ShowSessions": false,
-  "ShowXp": false
+  "ShowXp": false,
+  "LastLogPath": "D:\\code\\eq-log-parser\\eqlog_Sika_test.txt"
 }

@@ -47,24 +47,42 @@ return rootCommand.Parse(args).Invoke();
 
 static int Run(FileInfo? logFile, bool useTextReport, bool watch, TimeSpan refreshInterval)
 {
-    // If no file was provided and we can open the TUI, show a file picker.
-    if (logFile is null)
+    var store  = ConfigStore.Default();
+    var config = store.Load();
+
+    // ---- resolve log file path ----
+    string? logPath = null;
+
+    if (logFile is not null)
     {
-        if (useTextReport || !CanRunTerminalUi())
+        logPath = logFile.FullName;
+    }
+    else if (!useTextReport && CanRunTerminalUi())
+    {
+        // No file on the command line — check whether there is a remembered file.
+        if (config.LastLogPath is not null && File.Exists(config.LastLogPath))
         {
-            Console.Error.WriteLine("No log file specified.");
-            return 1;
+            // Ask the user whether to resume or open a different file.
+            bool resume = LogFilePicker.AskResume(config.LastLogPath);
+            logPath = resume
+                ? config.LastLogPath
+                : LogFilePicker.PickStandalone(config.LastLogPath);
+        }
+        else
+        {
+            logPath = LogFilePicker.PickStandalone();
         }
 
-        var picked = LogFilePicker.PickStandalone();
-        if (picked is null)
+        if (logPath is null)
             return 0; // user cancelled
-
-        logFile = new FileInfo(picked);
+    }
+    else
+    {
+        Console.Error.WriteLine("No log file specified.");
+        return 1;
     }
 
-    var logPath = logFile.FullName;
-    if (!logFile.Exists)
+    if (!File.Exists(logPath))
     {
         Console.Error.WriteLine($"Log file not found: {logPath}");
         return 1;
@@ -76,9 +94,17 @@ static int Run(FileInfo? logFile, bool useTextReport, bool watch, TimeSpan refre
         return 1;
     }
 
+    // Persist the chosen file so we can offer to resume it next time.
+    config.LastLogPath = logPath;
+    store.Save(config);
+
     // fileLoader creates a fresh parser per file — incremental parser state is per-file.
     (DamageReport Initial, Func<DamageReport>? Refresh) LoadFile(string path)
     {
+        // Persist the newly opened file every time the user switches via O key.
+        config.LastLogPath = path;
+        store.Save(config);
+
         var p  = new EqDamageParser(new DamageLineParser(), new KillLineParser(), new MobNameNormalizer());
         var ip = new LogIdentityParser();
         DamageReport Make() => new(Path.GetFullPath(path), ip.TryParse(path), p.Parse(path), DateTimeOffset.Now);
@@ -109,7 +135,6 @@ static int Run(FileInfo? logFile, bool useTextReport, bool watch, TimeSpan refre
         return 0;
     }
 
-    var config   = ConfigStore.Default().Load();
     var renderer = new TerminalGuiDamageReportRenderer(config, LoadFile);
 
     if (watch && refreshFn is not null)

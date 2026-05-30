@@ -7,5 +7,6 @@ public sealed class AppConfig
     public bool ShowKills            { get; set; } = true;
     public bool ShowLoot             { get; set; } = true;
     public bool ShowSessions         { get; set; } = true;
-    public bool ShowXp               { get; set; } = true;
+    public bool    ShowXp               { get; set; } = true;
+    public string? LastLogPath          { get; set; }
 }
