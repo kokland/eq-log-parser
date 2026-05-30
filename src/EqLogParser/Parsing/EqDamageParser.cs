@@ -10,12 +10,14 @@ public sealed class EqDamageParser(
 {
     private static readonly StringComparer MobNameComparer = StringComparer.OrdinalIgnoreCase;
     private readonly LootLineParser lootLineParser = new();
+    private readonly XpLineParser   xpLineParser   = new();
 
     // Incremental-parse state — accumulated across calls to Parse(path).
     private readonly Dictionary<string, MobDamage> _totals          = new(MobNameComparer);
     private readonly Dictionary<string, MobDamage> _activeEncounters = new(MobNameComparer);
     private readonly List<KillSummary>              _kills            = [];
     private readonly List<LootEvent>                _lootEvents       = [];
+    private readonly List<XpEvent>                  _xpEvents         = [];
     private int  _lineNumber  = 0;
     private long _byteOffset  = 0;
 
@@ -42,8 +44,9 @@ public sealed class EqDamageParser(
                 var line = EqLogLine.FromText(_lineNumber, text);
 
                 if (TrackDamage(line))  continue;
-                if (TrackKill(line))    continue;
-                TrackLoot(line);
+            if (TrackKill(line))    continue;
+            if (TrackLoot(line))    continue;
+            TrackXp(line);
             }
         }
 
@@ -84,6 +87,7 @@ public sealed class EqDamageParser(
         _activeEncounters.Clear();
         _kills.Clear();
         _lootEvents.Clear();
+        _xpEvents.Clear();
         _lineNumber = 0;
         _byteOffset = 0;
     }
@@ -112,12 +116,21 @@ public sealed class EqDamageParser(
         return true;
     }
 
-    private void TrackLoot(EqLogLine line)
+    private bool TrackLoot(EqLogLine line)
     {
         var loot = lootLineParser.TryParse(line.Message);
-        if (loot is null) return;
+        if (loot is null) return false;
 
         _lootEvents.Add(loot with { LineNumber = line.Number, Timestamp = line.Timestamp });
+        return true;
+    }
+
+    private void TrackXp(EqLogLine line)
+    {
+        var xp = xpLineParser.TryParse(line.Message);
+        if (xp is null) return;
+
+        _xpEvents.Add(xp with { LineNumber = line.Number, Timestamp = line.Timestamp });
     }
 
     private DamageSummary BuildSummary()
@@ -131,6 +144,7 @@ public sealed class EqDamageParser(
             _kills.AsReadOnly(),
             openEncounters,
             loot,
+            _xpEvents.AsReadOnly(),
             mobs.Sum(m => m.TotalDamage),
             mobs.Sum(m => m.Hits));
     }

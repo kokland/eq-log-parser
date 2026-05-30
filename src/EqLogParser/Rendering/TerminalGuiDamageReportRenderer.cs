@@ -33,7 +33,7 @@ public sealed class TerminalGuiDamageReportRenderer
             X = 0,
             Y = 0,
             Width = Dim.Fill(),
-            Height = 4,
+            Height = 5,
             Text = BuildHeader(report)
         };
 
@@ -64,6 +64,15 @@ public sealed class TerminalGuiDamageReportRenderer
             Height = Dim.Fill(1)
         };
 
+        var xpFrame = new FrameView
+        {
+            Title = XpFrameTitle(report.Summary.Xp),
+            X = Pos.Right(lootFrame),
+            Y = Pos.Bottom(header),
+            Width = Dim.Fill(),
+            Height = Dim.Fill(1)
+        };
+
         var footer = new Label
         {
             X = 0,
@@ -77,6 +86,7 @@ public sealed class TerminalGuiDamageReportRenderer
         // ApplyFilter filters from these; no re-sort needed inside ApplyFilter.
         List<KillSummary>   allKillsSorted = [];
         List<LootSummary>   allLootSorted  = [];
+        List<XpEvent>       allXpSorted    = [];
         // Kill line number → loot items for that kill; rebuilt with the report.
         Dictionary<int, List<LootSummary>> lootByKillLine = [];
 
@@ -84,6 +94,7 @@ public sealed class TerminalGuiDamageReportRenderer
         {
             allKillsSorted = r.Summary.Kills.OrderByDescending(k => k.LineNumber).ToList();
             allLootSorted  = r.Summary.Loot.OrderByDescending(l => l.LineNumber).ToList();
+            allXpSorted    = r.Summary.Xp.OrderByDescending(x => x.LineNumber).ToList();
             lootByKillLine = [];
             foreach (var l in r.Summary.Loot)
             {
@@ -101,19 +112,22 @@ public sealed class TerminalGuiDamageReportRenderer
         var totalsTable = CreateTableView(CreateMobTotalsTable(report.Summary.Mobs));
         var killsTable  = CreateTableView(CreateKillsTable(allKillsSorted));
         var lootTable   = CreateTableView(CreateLootTable(allLootSorted));
+        var xpTable     = CreateTableView(CreateXpTable(allXpSorted));
 
         totalsFrame.Add(totalsTable);
         killsFrame.Add(killsTable);
         lootFrame.Add(lootTable);
+        xpFrame.Add(xpTable);
 
-        // Tab moves focus between the left and right panels.
+        // Tab moves focus between panels.
         // +/- adjust the live-refresh interval (watch mode only).
         // F opens a filter dialog to narrow tables by mob name.
-        // 1/2/3 toggle the totals/kills/loot panels.
+        // 1/2/3/4 toggle the totals/kills/loot/xp panels.
         // D opens a kill detail breakdown dialog.
         bool showTotals = true;
         bool showKills  = true;
         bool showLoot   = true;
+        bool showXp     = true;
         string currentFilter = string.Empty;
         DamageReport lastReport = report;
         // Tracks the kill rows currently visible in killsTable (respects active filter + sort).
@@ -124,15 +138,16 @@ public sealed class TerminalGuiDamageReportRenderer
         void UpdateLayout()
         {
             // Determine which panels are visible.
-            var visible = new List<FrameView>(3);
+            var visible = new List<FrameView>(4);
             if (showTotals) visible.Add(totalsFrame);
             if (showKills)  visible.Add(killsFrame);
             if (showLoot)   visible.Add(lootFrame);
+            if (showXp)     visible.Add(xpFrame);
 
             // If all hidden, reset to all visible.
             if (visible.Count == 0)
             {
-                showTotals = showKills = showLoot = true;
+                showTotals = showKills = showLoot = showXp = true;
                 UpdateLayout();
                 return;
             }
@@ -141,6 +156,7 @@ public sealed class TerminalGuiDamageReportRenderer
             totalsFrame.Visible = showTotals;
             killsFrame.Visible  = showKills;
             lootFrame.Visible   = showLoot;
+            xpFrame.Visible     = showXp;
 
             // Lay out visible panels as equal-width columns.
             int pct = 100 / visible.Count;
@@ -193,11 +209,16 @@ public sealed class TerminalGuiDamageReportRenderer
             totalsTable.Table = new DataTableSource(CreateMobTotalsTable(filteredMobs));
             killsTable.Table  = new DataTableSource(CreateKillsTable(filteredKills));
             lootTable.Table   = new DataTableSource(CreateLootTable(filteredLoot));
+            // XP events have no mob name — always show the full sorted list.
+            xpTable.Table     = new DataTableSource(CreateXpTable(allXpSorted));
+            xpFrame.Title     = XpFrameTitle(r.Summary.Xp);
             totalsTable.SetNeedsDraw();
             killsTable.SetNeedsDraw();
             lootTable.SetNeedsDraw();
+            xpTable.SetNeedsDraw();
             killsFrame.SetNeedsDraw();
             lootFrame.SetNeedsDraw();
+            xpFrame.SetNeedsDraw();
         }
 
         void ScheduleRefresh()
@@ -217,6 +238,8 @@ public sealed class TerminalGuiDamageReportRenderer
                 {
                     RebuildCaches(lastReport);
                     ApplyFilter(lastReport, currentFilter);
+                    xpFrame.Title = XpFrameTitle(lastReport.Summary.Xp);
+                    xpFrame.SetNeedsDraw();
                 }
 
                 // Return false — we reschedule manually so we always use currentInterval.
@@ -230,14 +253,15 @@ public sealed class TerminalGuiDamageReportRenderer
             var filterTag = string.IsNullOrWhiteSpace(currentFilter)
                 ? ""
                 : $" [filter: \"{currentFilter}\"]";
-            var hidden = new List<string>(3);
+            var hidden = new List<string>(4);
             if (!showTotals) hidden.Add("totals");
             if (!showKills)  hidden.Add("kills");
             if (!showLoot)   hidden.Add("loot");
+            if (!showXp)     hidden.Add("xp");
             var viewTag = hidden.Count > 0 ? $" [hidden: {string.Join(", ", hidden)}]" : "";
             footer.Text = refreshReport is not null
-                ? $"Live every {currentInterval.TotalSeconds:N0}s (+/- change). F filter{filterTag}. 1/2/3 panels{viewTag}. D detail. Tab/Arrow/PgUp/PgDn. Esc exits."
-                : $"F filter{filterTag}. 1/2/3 panels{viewTag}. D detail (kills panel). Tab/Arrow/PgUp/PgDn. Esc. --text plain.";
+                ? $"Live every {currentInterval.TotalSeconds:N0}s (+/- change). F filter{filterTag}. 1/2/3/4 panels{viewTag}. D detail. Tab/Arrow/PgUp/PgDn. Esc exits."
+                : $"F filter{filterTag}. 1/2/3/4 panels{viewTag}. D detail (kills panel). Tab/Arrow/PgUp/PgDn. Esc. --text plain.";
             footer.SetNeedsDraw();
         }
 
@@ -395,13 +419,15 @@ public sealed class TerminalGuiDamageReportRenderer
 
             if (e.KeyCode == KeyCode.Tab)
             {
-                // Cycle focus through visible panels: totals -> kills -> loot -> totals ...
-                if (totalsTable.HasFocus)
-                    (showKills ? killsTable : showLoot ? lootTable : totalsTable).SetFocus();
-                else if (killsTable.HasFocus)
-                    (showLoot ? lootTable : showTotals ? totalsTable : killsTable).SetFocus();
-                else
-                    (showTotals ? totalsTable : showKills ? killsTable : lootTable).SetFocus();
+                // Cycle focus through visible panels in order: totals -> kills -> loot -> xp -> totals
+                TableView[] cycle = [totalsTable, killsTable, lootTable, xpTable];
+                bool[] shown      = [showTotals, showKills, showLoot, showXp];
+                int current = Array.FindIndex(cycle, t => t.HasFocus);
+                for (int i = 1; i <= cycle.Length; i++)
+                {
+                    int next = (current + i) % cycle.Length;
+                    if (shown[next]) { cycle[next].SetFocus(); break; }
+                }
                 e.Handled = true;
                 return;
             }
@@ -428,11 +454,12 @@ public sealed class TerminalGuiDamageReportRenderer
                 return;
             }
 
-            if (e.AsRune.Value is '1' or '2' or '3')
+            if (e.AsRune.Value is '1' or '2' or '3' or '4')
             {
-                if (e.AsRune.Value == '1')      showTotals = !showTotals;
+                if      (e.AsRune.Value == '1') showTotals = !showTotals;
                 else if (e.AsRune.Value == '2') showKills  = !showKills;
-                else                            showLoot   = !showLoot;
+                else if (e.AsRune.Value == '3') showLoot   = !showLoot;
+                else                            showXp     = !showXp;
                 UpdateLayout();
                 UpdateFooter();
                 e.Handled = true;
@@ -460,7 +487,7 @@ public sealed class TerminalGuiDamageReportRenderer
             ScheduleRefresh();
         }
 
-        window.Add(header, totalsFrame, killsFrame, lootFrame, footer);
+        window.Add(header, totalsFrame, killsFrame, lootFrame, xpFrame, footer);
         app.Run(window);
     }
 
@@ -482,10 +509,25 @@ public sealed class TerminalGuiDamageReportRenderer
             ? "Character: unknown    Server: unknown"
             : $"Character: {report.Identity.CharacterName}    Server: {report.Identity.ServerName}";
 
+        var xp     = report.Summary.Xp;
+        var solo   = xp.Where(x => !x.IsParty).Sum(x => x.Percent);
+        var party  = xp.Where(x =>  x.IsParty).Sum(x => x.Percent);
+        var xpLine = xp.Count == 0
+            ? "XP: none"
+            : $"XP: {solo + party:F3}%  (solo: {solo:F3}% / {xp.Count(x => !x.IsParty)} gains    party: {party:F3}% / {xp.Count(x => x.IsParty)} gains)";
+
         return
             $"{identity}{Environment.NewLine}" +
             $"Total damage: {report.Summary.TotalDamage:N0}    Damage lines: {report.Summary.TotalHits:N0}    Mob groups: {report.Summary.Mobs.Count:N0}{Environment.NewLine}" +
-            $"Updated: {report.UpdatedAt:yyyy-MM-dd HH:mm:ss zzz}    Log: {report.LogPath}";
+            $"Updated: {report.UpdatedAt:yyyy-MM-dd HH:mm:ss zzz}    Log: {report.LogPath}{Environment.NewLine}" +
+            xpLine;
+    }
+
+    private static string XpFrameTitle(IReadOnlyList<XpEvent> xp)
+    {
+        if (xp.Count == 0) return "XP gains (none)";
+        var total = xp.Sum(x => x.Percent);
+        return $"XP gains ({xp.Count:N0})  total: {total:F3}%";
     }
 
     private static DataTable CreateMobTotalsTable(IReadOnlyList<MobDamage> mobs)
@@ -525,8 +567,23 @@ public sealed class TerminalGuiDamageReportRenderer
         return table;
     }
 
-    private static DataTable CreateLootTable(IEnumerable<LootSummary> loot)
+    private static DataTable CreateXpTable(IEnumerable<XpEvent> events)
     {
+        var table = CreateTable("Line", "Time", "XP%", "Type");
+
+        foreach (var ev in events)
+        {
+            table.Rows.Add(
+                ev.LineNumber,
+                ev.Timestamp,
+                $"{ev.Percent:F3}%",
+                ev.IsParty ? "party" : "solo");
+        }
+
+        return table;
+    }
+
+    private static DataTable CreateLootTable(IEnumerable<LootSummary> loot)    {
         var table = CreateTable("Line", "Time", "Item", "Mob", "Sold?", "Kill#");
 
         foreach (var l in loot)
