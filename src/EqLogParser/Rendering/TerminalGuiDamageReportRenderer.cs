@@ -92,9 +92,34 @@ public sealed class TerminalGuiDamageReportRenderer
         string currentFilter = string.Empty;
         DamageReport lastReport = report;
         // Tracks the kill rows currently visible in killsTable (respects active filter + sort).
-        List<KillSummary> displayedKills = report.Summary.Kills.OrderByDescending(k => k.LineNumber).ToList();
+        IReadOnlyList<KillSummary> displayedKills = [];
         object? timeoutToken = null;
         var currentInterval = refreshInterval ?? TimeSpan.Zero;
+
+        // Pre-sorted views of the full data set — rebuilt only when the report changes.
+        // ApplyFilter filters from these; no re-sort needed inside ApplyFilter.
+        List<KillSummary>   allKillsSorted = [];
+        List<LootSummary>   allLootSorted  = [];
+        // Kill line number → loot items for that kill; rebuilt with the report.
+        Dictionary<int, List<LootSummary>> lootByKillLine = [];
+
+        void RebuildCaches(DamageReport r)
+        {
+            allKillsSorted = r.Summary.Kills.OrderByDescending(k => k.LineNumber).ToList();
+            allLootSorted  = r.Summary.Loot.OrderByDescending(l => l.LineNumber).ToList();
+            lootByKillLine = [];
+            foreach (var l in r.Summary.Loot)
+            {
+                if (l.KillLineNumber is int kl)
+                {
+                    if (!lootByKillLine.TryGetValue(kl, out var bucket))
+                        lootByKillLine[kl] = bucket = [];
+                    bucket.Add(l);
+                }
+            }
+        }
+
+        RebuildCaches(report);
 
         void UpdateLayout()
         {
@@ -144,21 +169,28 @@ public sealed class TerminalGuiDamageReportRenderer
 
         void ApplyFilter(DamageReport r, string filter)
         {
-            var filteredMobs  = string.IsNullOrWhiteSpace(filter)
-                ? r.Summary.Mobs
-                : r.Summary.Mobs.Where(m => m.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
-            var filteredKills = string.IsNullOrWhiteSpace(filter)
-                ? r.Summary.Kills
-                : r.Summary.Kills.Where(k => k.Mob.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
-            var filteredLoot  = string.IsNullOrWhiteSpace(filter)
-                ? r.Summary.Loot
-                : r.Summary.Loot.Where(l => l.MobName.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+            IReadOnlyList<MobDamage>   filteredMobs;
+            IReadOnlyList<KillSummary> filteredKills;
+            IReadOnlyList<LootSummary> filteredLoot;
 
-            displayedKills = filteredKills.OrderByDescending(k => k.LineNumber).ToList();
+            if (string.IsNullOrWhiteSpace(filter))
+            {
+                filteredMobs  = r.Summary.Mobs;
+                filteredKills = allKillsSorted;   // already sorted descending
+                filteredLoot  = allLootSorted;    // already sorted descending
+            }
+            else
+            {
+                filteredMobs  = r.Summary.Mobs .Where(m => m.Name     .Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+                filteredKills = allKillsSorted  .Where(k => k.Mob.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+                filteredLoot  = allLootSorted   .Where(l => l.MobName .Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+            }
+
+            displayedKills = filteredKills;
             killsFrame.Title = $"Individual kills ({filteredKills.Count:N0})";
             lootFrame.Title  = $"Loot ({filteredLoot.Count:N0})";
             totalsTable.Table = new DataTableSource(CreateMobTotalsTable(filteredMobs));
-            killsTable.Table  = new DataTableSource(CreateKillsTable(displayedKills));
+            killsTable.Table  = new DataTableSource(CreateKillsTable(filteredKills));
             lootTable.Table   = new DataTableSource(CreateLootTable(filteredLoot));
             totalsTable.SetNeedsDraw();
             killsTable.SetNeedsDraw();
@@ -173,11 +205,18 @@ public sealed class TerminalGuiDamageReportRenderer
 
             timeoutToken = app.AddTimeout(currentInterval, () =>
             {
-                lastReport = refreshReport();
+                var newReport = refreshReport();
+                var changed   = newReport.Summary.TotalHits != lastReport.Summary.TotalHits;
+                lastReport    = newReport;
+
                 header.Text = BuildHeader(lastReport);
                 header.SetNeedsDraw();
-                // Re-apply the active filter so watch mode respects it.
-                ApplyFilter(lastReport, currentFilter);
+
+                if (changed)
+                {
+                    RebuildCaches(lastReport);
+                    ApplyFilter(lastReport, currentFilter);
+                }
 
                 // Return false — we reschedule manually so we always use currentInterval.
                 ScheduleRefresh();
@@ -228,10 +267,19 @@ public sealed class TerminalGuiDamageReportRenderer
                 Width = Dim.Fill(2)
             };
 
-            // Live preview: filter the tables as the user types.
+            // Live preview: debounced so a DataTable rebuild fires at most once per 150 ms
+            // rather than on every individual keystroke.
+            object? filterDebounceToken = null;
             textField.TextChanged += (_, _) =>
             {
-                ApplyFilter(lastReport, textField.Text?.Trim() ?? string.Empty);
+                if (filterDebounceToken is not null)
+                    app.RemoveTimeout(filterDebounceToken);
+                filterDebounceToken = app.AddTimeout(TimeSpan.FromMilliseconds(150), () =>
+                {
+                    filterDebounceToken = null;
+                    ApplyFilter(lastReport, textField.Text?.Trim() ?? string.Empty);
+                    return false;
+                });
             };
 
             dialog.Add(label, textField);
@@ -257,11 +305,10 @@ public sealed class TerminalGuiDamageReportRenderer
         // Use app.Keyboard.KeyDown (application-scoped, fires before any view sees the key)
         void OpenKillDetailDialog(KillSummary kill)
         {
-            var sources = kill.Mob.BySource;
-            var killLoot = lastReport.Summary.Loot
-                .Where(l => l.KillLineNumber == kill.LineNumber)
-                .OrderBy(l => l.LineNumber)
-                .ToList();
+            var sources  = kill.Mob.BySource;
+            var killLoot = lootByKillLine.TryGetValue(kill.LineNumber, out var bucket)
+                ? bucket
+                : (IReadOnlyList<LootSummary>)[];
 
             var total      = kill.Mob.TotalDamage;
             var maxDamage  = sources.Count > 0 ? sources.Max(s => s.TotalDamage) : 1L;
@@ -481,7 +528,7 @@ public sealed class TerminalGuiDamageReportRenderer
     {
         var table = CreateTable("Line", "Time", "Item", "Mob", "Sold?", "Kill#");
 
-        foreach (var l in loot.OrderByDescending(x => x.LineNumber))
+        foreach (var l in loot)
         {
             table.Rows.Add(
                 l.LineNumber,
