@@ -1,6 +1,8 @@
 using System.Data;
 using EqLogParser.Domain;
 using Terminal.Gui.App;
+using Terminal.Gui.Drivers;
+using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 
@@ -59,7 +61,7 @@ public sealed class TerminalGuiDamageReportRenderer
             Y = Pos.AnchorEnd(1),
             Width = Dim.Fill(),
             Height = 1,
-            Text = "Arrow keys/PageUp/PageDown scroll tables. Esc exits. Use --text for plain output."
+            Text = "Tab switches panels. Arrow keys/PageUp/PageDown scroll tables. Esc exits. Use --text for plain output."
         };
 
         var totalsTable = CreateTableView(CreateMobTotalsTable(report.Summary.Mobs));
@@ -68,10 +70,16 @@ public sealed class TerminalGuiDamageReportRenderer
         totalsFrame.Add(totalsTable);
         killsFrame.Add(killsTable);
 
-        if (refreshReport is not null && refreshInterval is not null)
+        // Tab moves focus between the left and right panels.
+        // +/- adjust the live-refresh interval (watch mode only).
+        object? timeoutToken = null;
+        var currentInterval = refreshInterval ?? TimeSpan.Zero;
+
+        void ScheduleRefresh()
         {
-            footer.Text = $"Live update every {refreshInterval.Value.TotalSeconds:N0}s. Arrow keys/PageUp/PageDown scroll tables. Esc exits.";
-            app.AddTimeout(refreshInterval.Value, () =>
+            if (refreshReport is null) return;
+
+            timeoutToken = app.AddTimeout(currentInterval, () =>
             {
                 var refreshed = refreshReport();
                 header.Text = BuildHeader(refreshed);
@@ -83,8 +91,51 @@ public sealed class TerminalGuiDamageReportRenderer
                 header.SetNeedsDraw();
                 killsFrame.SetNeedsDraw();
 
-                return true;
+                // Return false — we reschedule manually so we always use currentInterval.
+                ScheduleRefresh();
+                return false;
             });
+        }
+
+        void UpdateFooter()
+        {
+            footer.Text = refreshReport is not null
+                ? $"Live update every {currentInterval.TotalSeconds:N0}s (+/- to change). Tab switches panels. Arrow/PgUp/PgDn scroll. Esc exits."
+                : "Tab switches panels. Arrow keys/PageUp/PageDown scroll tables. Esc exits. Use --text for plain output.";
+            footer.SetNeedsDraw();
+        }
+
+        window.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == KeyCode.Tab)
+            {
+                if (totalsTable.HasFocus)
+                    killsTable.SetFocus();
+                else
+                    totalsTable.SetFocus();
+                e.Handled = true;
+                return;
+            }
+
+            if (refreshReport is not null && (e.AsRune.Value is '+' or '=' or '-'))
+            {
+                var delta = e.AsRune.Value == '-' ? -5 : 5;
+                var newSeconds = Math.Max(5, (int)currentInterval.TotalSeconds + delta);
+                currentInterval = TimeSpan.FromSeconds(newSeconds);
+
+                if (timeoutToken is not null)
+                    app.RemoveTimeout(timeoutToken);
+
+                ScheduleRefresh();
+                UpdateFooter();
+                e.Handled = true;
+            }
+        };
+
+        if (refreshReport is not null && refreshInterval is not null)
+        {
+            UpdateFooter();
+            ScheduleRefresh();
         }
 
         window.Add(header, totalsFrame, killsFrame, footer);
@@ -136,7 +187,7 @@ public sealed class TerminalGuiDamageReportRenderer
     {
         var table = CreateTable("Line", "Time", "Mob", "Total", "Direct", "YOUR", "Hits", "Killed by");
 
-        foreach (var kill in kills)
+        foreach (var kill in kills.OrderByDescending(k => k.LineNumber))
         {
             table.Rows.Add(
                 kill.LineNumber,
