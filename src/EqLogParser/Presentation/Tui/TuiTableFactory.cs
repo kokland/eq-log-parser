@@ -1,7 +1,6 @@
 using System.Data;
 using EqLogParser.Core;
 using EqLogParser.Core.Domain;
-using Terminal.Gui.App;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 

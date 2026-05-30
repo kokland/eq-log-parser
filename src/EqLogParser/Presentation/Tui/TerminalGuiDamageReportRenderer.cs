@@ -10,7 +10,16 @@ using Terminal.Gui.Views;
 
 namespace EqLogParser.Presentation.Tui;
 
-public sealed class TerminalGuiDamageReportRenderer(AppConfig config) : IDamageReportRenderer
+/// <param name="config">Persisted panel-visibility and interval settings.</param>
+/// <param name="fileLoader">
+/// Optional callback invoked when the user opens a different log file via the <c>O</c> key.
+/// Receives the new file path and returns the initial <see cref="DamageReport"/> plus a
+/// live-refresh delegate (or <c>null</c> if not in watch mode).
+/// </param>
+public sealed class TerminalGuiDamageReportRenderer(
+    AppConfig                                                      config,
+    Func<string, (DamageReport Initial, Func<DamageReport>? Refresh)>? fileLoader = null)
+    : IDamageReportRenderer
 {
     public TerminalGuiDamageReportRenderer() : this(new AppConfig()) { }
 
@@ -42,9 +51,9 @@ public sealed class TerminalGuiDamageReportRenderer(AppConfig config) : IDamageR
             Text = TuiTableFactory.BuildHeader(report)
         };
 
-        var totalsFrame   = new FrameView { Title = "Damage by mob",                            X = 0,                    Y = Pos.Bottom(header), Width = Dim.Percent(45), Height = Dim.Fill(1) };
-        var killsFrame    = new FrameView { Title = $"Individual kills ({report.Summary.Kills.Count:N0})",   X = Pos.Right(totalsFrame),   Y = Pos.Bottom(header), Width = Dim.Percent(28), Height = Dim.Fill(1) };
-        var lootFrame     = new FrameView { Title = $"Loot ({report.Summary.Loot.Count:N0})",   X = Pos.Right(killsFrame),    Y = Pos.Bottom(header), Width = Dim.Fill(),       Height = Dim.Fill(1) };
+        var totalsFrame   = new FrameView { Title = "Damage by mob",                                             X = 0,                    Y = Pos.Bottom(header), Width = Dim.Percent(45), Height = Dim.Fill(1) };
+        var killsFrame    = new FrameView { Title = $"Individual kills ({report.Summary.Kills.Count:N0})",       X = Pos.Right(totalsFrame),   Y = Pos.Bottom(header), Width = Dim.Percent(28), Height = Dim.Fill(1) };
+        var lootFrame     = new FrameView { Title = $"Loot ({report.Summary.Loot.Count:N0})",                   X = Pos.Right(killsFrame),    Y = Pos.Bottom(header), Width = Dim.Fill(),       Height = Dim.Fill(1) };
         var sessionsFrame = new FrameView { Title = TuiTableFactory.SessionsFrameTitle(report.Summary.Sessions), X = Pos.Right(lootFrame),     Y = Pos.Bottom(header), Width = Dim.Fill(),       Height = Dim.Fill(1) };
         var xpFrame       = new FrameView { Title = TuiTableFactory.XpFrameTitle(report.Summary.Xp),            X = Pos.Right(sessionsFrame), Y = Pos.Bottom(header), Width = Dim.Fill(),       Height = Dim.Fill(1) };
 
@@ -54,7 +63,7 @@ public sealed class TerminalGuiDamageReportRenderer(AppConfig config) : IDamageR
             Text = "Tab switches panels. Arrow keys/PageUp/PageDown scroll tables. Esc exits. Use --text for plain output."
         };
 
-        // ---- state ----
+        // ---- mutable state ----
         List<KillSummary>    allKillsSorted    = [];
         List<LootSummary>    allLootSorted     = [];
         List<XpEvent>        allXpSorted       = [];
@@ -100,6 +109,8 @@ public sealed class TerminalGuiDamageReportRenderer(AppConfig config) : IDamageR
         bool showXp       = config.ShowXp;
         string currentFilter = string.Empty;
         DamageReport lastReport = report;
+        // These are mutable so the O-key file-switch can replace them in-place.
+        Func<DamageReport>? currentRefresh = refreshReport;
         IReadOnlyList<KillSummary>    displayedKills    = allKillsSorted;
         IReadOnlyList<SessionSummary> displayedSessions = allSessionsSorted;
         object? timeoutToken = null;
@@ -112,7 +123,7 @@ public sealed class TerminalGuiDamageReportRenderer(AppConfig config) : IDamageR
             config.ShowLoot     = showLoot;
             config.ShowSessions = showSessions;
             config.ShowXp       = showXp;
-            if (refreshReport is not null)
+            if (currentRefresh is not null)
                 config.WatchIntervalSeconds = (int)currentInterval.TotalSeconds;
             ConfigStore.Default().Save(config);
         }
@@ -206,10 +217,10 @@ public sealed class TerminalGuiDamageReportRenderer(AppConfig config) : IDamageR
 
         void ScheduleRefresh()
         {
-            if (refreshReport is null) return;
+            if (currentRefresh is null) return;
             timeoutToken = app.AddTimeout(currentInterval, () =>
             {
-                var newReport = refreshReport();
+                var newReport = currentRefresh();
                 var changed   = newReport.Summary.TotalHits != lastReport.Summary.TotalHits;
                 lastReport    = newReport;
                 header.Text   = TuiTableFactory.BuildHeader(lastReport);
@@ -237,10 +248,10 @@ public sealed class TerminalGuiDamageReportRenderer(AppConfig config) : IDamageR
             if (!showLoot)     hidden.Add("loot");
             if (!showSessions) hidden.Add("sessions");
             if (!showXp)       hidden.Add("xp");
-            var viewTag = hidden.Count > 0 ? $" [hidden: {string.Join(", ", hidden)}]" : "";
-            footer.Text = refreshReport is not null
-                ? $"Live every {currentInterval.TotalSeconds:N0}s (+/- change). F filter{filterTag}. 1-5 panels{viewTag}. D detail (kills). S detail (sessions). Tab/Arrow/PgUp/PgDn. Esc."
-                : $"F filter{filterTag}. 1-5 panels{viewTag}. D detail (kills). S detail (sessions). Tab/Arrow/PgUp/PgDn. Esc. --text plain.";
+            var viewTag  = hidden.Count > 0 ? $" [hidden: {string.Join(", ", hidden)}]" : "";
+            var openTag  = fileLoader is not null ? " O open." : "";
+            var liveTag  = currentRefresh is not null ? $"Live every {currentInterval.TotalSeconds:N0}s (+/- change). " : "";
+            footer.Text  = $"{liveTag}F filter{filterTag}. 1-5 panels{viewTag}. D kills. S sessions.{openTag} Tab/Arrow/PgUp/PgDn. Esc.";
             footer.SetNeedsDraw();
         }
 
@@ -278,6 +289,36 @@ public sealed class TerminalGuiDamageReportRenderer(AppConfig config) : IDamageR
                 else
                 {
                     ApplyFilter(lastReport, saved);
+                }
+                modalActive = false;
+                e.Handled = true;
+                return;
+            }
+
+            // O — open a different log file (only available when a fileLoader was provided)
+            if (e.KeyCode == KeyCode.O && fileLoader is not null)
+            {
+                modalActive = true;
+                var newPath = LogFilePicker.Pick(app, lastReport.LogPath);
+                if (newPath is not null)
+                {
+                    if (timeoutToken is not null) { app.RemoveTimeout(timeoutToken); timeoutToken = null; }
+
+                    var (newReport, newRefresh) = fileLoader(newPath);
+                    currentRefresh = newRefresh;
+                    lastReport     = newReport;
+                    currentFilter  = string.Empty;
+
+                    header.Text = TuiTableFactory.BuildHeader(lastReport);
+                    header.SetNeedsDraw();
+
+                    RebuildCaches(lastReport);
+                    ApplyFilter(lastReport, string.Empty);
+
+                    if (currentRefresh is not null)
+                        ScheduleRefresh();
+
+                    UpdateFooter();
                 }
                 modalActive = false;
                 e.Handled = true;
@@ -327,7 +368,7 @@ public sealed class TerminalGuiDamageReportRenderer(AppConfig config) : IDamageR
                 return;
             }
 
-            if (refreshReport is not null && (e.AsRune.Value is '+' or '=' or '-'))
+            if (currentRefresh is not null && (e.AsRune.Value is '+' or '=' or '-'))
             {
                 var delta = e.AsRune.Value == '-' ? -5 : 5;
                 currentInterval = TimeSpan.FromSeconds(Math.Max(5, (int)currentInterval.TotalSeconds + delta));
@@ -339,10 +380,15 @@ public sealed class TerminalGuiDamageReportRenderer(AppConfig config) : IDamageR
             }
         };
 
-        if (refreshReport is not null && refreshInterval is not null)
+        if (currentRefresh is not null && refreshInterval is not null)
         {
             UpdateFooter();
             ScheduleRefresh();
+        }
+        else if (fileLoader is not null)
+        {
+            // Not in watch mode but file-open is available — still show the footer hint.
+            UpdateFooter();
         }
 
         window.Add(header, totalsFrame, killsFrame, lootFrame, sessionsFrame, xpFrame, footer);

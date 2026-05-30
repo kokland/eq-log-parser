@@ -1,4 +1,3 @@
-using EqLogParser.Core.Domain;
 namespace EqLogParser.Core;
 
 public interface IDamageReportRenderer

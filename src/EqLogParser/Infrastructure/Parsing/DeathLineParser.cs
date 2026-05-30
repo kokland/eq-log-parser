@@ -1,5 +1,4 @@
 using System.Text.RegularExpressions;
-using EqLogParser.Core.Domain;
 
 namespace EqLogParser.Infrastructure.Parsing;
 

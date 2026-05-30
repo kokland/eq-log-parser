@@ -1,5 +1,3 @@
-using EqLogParser.Core.Domain;
-
 namespace EqLogParser.Infrastructure.Parsing.Handlers;
 
 public sealed class KillHandler(IKillLineParser parser, EncounterTracker tracker) : ILogLineHandler

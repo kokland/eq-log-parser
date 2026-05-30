@@ -5,9 +5,10 @@ using EqLogParser.Infrastructure.Parsing;
 using EqLogParser.Presentation.Cli;
 using EqLogParser.Presentation.Tui;
 
-var logFileArgument = new Argument<FileInfo>("log-file")
+var logFileArgument = new Argument<FileInfo?>("log-file")
 {
-    Description = "EverQuest log file named like eqlog_CharacterName_ServerName.txt"
+    Description = "EverQuest log file named like eqlog_CharacterName_ServerName.txt",
+    Arity       = ArgumentArity.ZeroOrOne,
 };
 
 var textOption = new Option<bool>("--text", "--no-tui")
@@ -39,13 +40,29 @@ rootCommand.SetAction(parseResult =>
     var watch           = parseResult.GetValue(watchOption);
     var intervalSeconds = parseResult.GetValue(intervalOption);
 
-    return Run(logFile!, useTextReport, watch, TimeSpan.FromSeconds(intervalSeconds));
+    return Run(logFile, useTextReport, watch, TimeSpan.FromSeconds(intervalSeconds));
 });
 
 return rootCommand.Parse(args).Invoke();
 
-static int Run(FileInfo logFile, bool useTextReport, bool watch, TimeSpan refreshInterval)
+static int Run(FileInfo? logFile, bool useTextReport, bool watch, TimeSpan refreshInterval)
 {
+    // If no file was provided and we can open the TUI, show a file picker.
+    if (logFile is null)
+    {
+        if (useTextReport || !CanRunTerminalUi())
+        {
+            Console.Error.WriteLine("No log file specified.");
+            return 1;
+        }
+
+        var picked = LogFilePicker.PickStandalone();
+        if (picked is null)
+            return 0; // user cancelled
+
+        logFile = new FileInfo(picked);
+    }
+
     var logPath = logFile.FullName;
     if (!logFile.Exists)
     {
@@ -59,32 +76,51 @@ static int Run(FileInfo logFile, bool useTextReport, bool watch, TimeSpan refres
         return 1;
     }
 
-    var parser         = new EqDamageParser(new DamageLineParser(), new KillLineParser(), new MobNameNormalizer());
-    var identityParser = new LogIdentityParser();
+    // fileLoader creates a fresh parser per file — incremental parser state is per-file.
+    (DamageReport Initial, Func<DamageReport>? Refresh) LoadFile(string path)
+    {
+        var p  = new EqDamageParser(new DamageLineParser(), new KillLineParser(), new MobNameNormalizer());
+        var ip = new LogIdentityParser();
+        DamageReport Make() => new(Path.GetFullPath(path), ip.TryParse(path), p.Parse(path), DateTimeOffset.Now);
+        return (Make(), watch ? Make : null);
+    }
 
-    DamageReport CreateReport() =>
-        new(Path.GetFullPath(logPath), identityParser.TryParse(logPath), parser.Parse(logPath), DateTimeOffset.Now);
+    var (initialReport, refreshFn) = LoadFile(logPath);
 
-    var report = CreateReport();
-    if (!watch && report.Summary.TotalHits == 0)
+    if (!watch && initialReport.Summary.TotalHits == 0)
     {
         Console.WriteLine("No outgoing player damage was found.");
         return 0;
     }
 
-    IDamageReportRenderer renderer = (useTextReport || !CanRunTerminalUi())
-        ? new ConsoleDamageReportRenderer()
-        : new TerminalGuiDamageReportRenderer(ConfigStore.Default().Load());
+    if (useTextReport || !CanRunTerminalUi())
+    {
+        IDamageReportRenderer textRenderer = new ConsoleDamageReportRenderer();
+        if (watch && refreshFn is not null)
+        {
+            using var cts2 = new CancellationTokenSource();
+            Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts2.Cancel(); };
+            textRenderer.RenderWatch(initialReport, refreshFn, refreshInterval, cts2.Token);
+        }
+        else
+        {
+            textRenderer.Render(initialReport);
+        }
+        return 0;
+    }
 
-    if (watch)
+    var config   = ConfigStore.Default().Load();
+    var renderer = new TerminalGuiDamageReportRenderer(config, LoadFile);
+
+    if (watch && refreshFn is not null)
     {
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
-        renderer.RenderWatch(report, CreateReport, refreshInterval, cts.Token);
+        renderer.RenderWatch(initialReport, refreshFn, refreshInterval, cts.Token);
     }
     else
     {
-        renderer.Render(report);
+        renderer.Render(initialReport);
     }
 
     return 0;

@@ -1,5 +1,3 @@
-using EqLogParser.Core.Domain;
-
 namespace EqLogParser.Infrastructure.Parsing.Handlers;
 
 public sealed class DamageHandler(IDamageLineParser parser, EncounterTracker tracker) : ILogLineHandler
