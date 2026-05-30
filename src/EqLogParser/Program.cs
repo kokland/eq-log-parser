@@ -2,7 +2,7 @@ using System.CommandLine;
 using EqLogParser.Core;
 using EqLogParser.Infrastructure.Config;
 using EqLogParser.Infrastructure.Parsing;
-using EqLogParser.Presentation.Console;
+using EqLogParser.Presentation.Cli;
 using EqLogParser.Presentation.Tui;
 
 var logFileArgument = new Argument<FileInfo>("log-file")

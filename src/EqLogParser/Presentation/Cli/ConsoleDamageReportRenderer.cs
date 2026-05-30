@@ -1,11 +1,11 @@
 using EqLogParser.Core;
 using EqLogParser.Core.Domain;
 
-namespace EqLogParser.Presentation.Console;
+namespace EqLogParser.Presentation.Cli;
 
 public sealed class ConsoleDamageReportRenderer(TextWriter? output = null) : IDamageReportRenderer
 {
-    private readonly TextWriter _output = output ?? global::System.Console.Out;
+    private readonly TextWriter _output = output ?? Console.Out;
 
     public void Render(DamageReport report)
     {
@@ -31,8 +31,8 @@ public sealed class ConsoleDamageReportRenderer(TextWriter? output = null) : IDa
             if (cancellationToken.WaitHandle.WaitOne(interval))
                 break;
 
-            if (!global::System.Console.IsOutputRedirected)
-                global::System.Console.Clear();
+            if (!Console.IsOutputRedirected)
+                Console.Clear();
 
             Render(refresh());
         }
