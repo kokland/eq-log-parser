@@ -73,10 +73,47 @@ public sealed class TerminalGuiDamageReportRenderer
         // Tab moves focus between the left and right panels.
         // +/- adjust the live-refresh interval (watch mode only).
         // F opens a filter dialog to narrow tables by mob name.
+        // 1/2 toggle the left/right panels.
+        bool showTotals = true;
+        bool showKills  = true;
         string currentFilter = string.Empty;
         DamageReport lastReport = report;
         object? timeoutToken = null;
         var currentInterval = refreshInterval ?? TimeSpan.Zero;
+
+        void UpdateLayout()
+        {
+            if (showTotals && showKills)
+            {
+                totalsFrame.Visible = true;
+                killsFrame.Visible  = true;
+                totalsFrame.Width   = Dim.Percent(45);
+                killsFrame.X        = Pos.Right(totalsFrame);
+                killsFrame.Width    = Dim.Fill();
+            }
+            else if (showTotals)
+            {
+                totalsFrame.Visible = true;
+                killsFrame.Visible  = false;
+                totalsFrame.Width   = Dim.Fill();
+            }
+            else if (showKills)
+            {
+                totalsFrame.Visible = false;
+                killsFrame.Visible  = true;
+                killsFrame.X        = 0;
+                killsFrame.Width    = Dim.Fill();
+            }
+            else
+            {
+                // Both hidden — reset both to visible.
+                showTotals = showKills = true;
+                UpdateLayout();
+                return;
+            }
+
+            window.SetNeedsDraw();
+        }
 
         void ApplyFilter(DamageReport r, string filter)
         {
@@ -118,9 +155,15 @@ public sealed class TerminalGuiDamageReportRenderer
             var filterTag = string.IsNullOrWhiteSpace(currentFilter)
                 ? ""
                 : $" [filter: \"{currentFilter}\"]";
+            var viewTag = (showTotals, showKills) switch
+            {
+                (false, _) => " [kills only]",
+                (_, false) => " [totals only]",
+                _          => ""
+            };
             footer.Text = refreshReport is not null
-                ? $"Live every {currentInterval.TotalSeconds:N0}s (+/- change). F filter{filterTag}. Tab panels. Arrow/PgUp/PgDn scroll. Esc exits."
-                : $"F filter{filterTag}. Tab panels. Arrow/PgUp/PgDn scroll. Esc exits. --text for plain output.";
+                ? $"Live every {currentInterval.TotalSeconds:N0}s (+/- change). F filter{filterTag}. 1/2 toggle panels{viewTag}. Tab/Arrow/PgUp/PgDn nav. Esc exits."
+                : $"F filter{filterTag}. 1/2 toggle panels{viewTag}. Tab/Arrow/PgUp/PgDn nav. Esc exits. --text for plain.";
             footer.SetNeedsDraw();
         }
 
@@ -198,6 +241,16 @@ public sealed class TerminalGuiDamageReportRenderer
                 modalActive = true;
                 OpenFilterDialog();
                 modalActive = false;
+                e.Handled = true;
+                return;
+            }
+
+            if (e.AsRune.Value is '1' or '2')
+            {
+                if (e.AsRune.Value == '1') showTotals = !showTotals;
+                else                       showKills  = !showKills;
+                UpdateLayout();
+                UpdateFooter();
                 e.Handled = true;
                 return;
             }
