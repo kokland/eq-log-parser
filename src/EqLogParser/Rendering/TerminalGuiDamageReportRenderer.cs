@@ -124,6 +124,9 @@ public sealed class TerminalGuiDamageReportRenderer
             footer.SetNeedsDraw();
         }
 
+        // Guard so our app-level handler doesn't re-fire while a modal is already open.
+        bool modalActive = false;
+
         void OpenFilterDialog()
         {
             var dialog = new Dialog
@@ -163,8 +166,12 @@ public sealed class TerminalGuiDamageReportRenderer
             }
         }
 
-        window.KeyDown += (_, e) =>
+        // Use app.Keyboard.KeyDown (application-scoped, fires before any view sees the key)
+        // so our bindings work regardless of which view currently has focus.
+        app.Keyboard.KeyDown += (_, e) =>
         {
+            if (modalActive) return;
+
             if (e.KeyCode == KeyCode.Tab)
             {
                 if (totalsTable.HasFocus)
@@ -177,7 +184,9 @@ public sealed class TerminalGuiDamageReportRenderer
 
             if (e.KeyCode == KeyCode.F)
             {
+                modalActive = true;
                 OpenFilterDialog();
+                modalActive = false;
                 e.Handled = true;
                 return;
             }
