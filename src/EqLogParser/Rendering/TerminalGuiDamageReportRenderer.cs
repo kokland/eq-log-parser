@@ -151,18 +151,29 @@ public sealed class TerminalGuiDamageReportRenderer
                 Width = Dim.Fill(1)
             };
 
+            // Live preview: filter the tables as the user types.
+            textField.TextChanged += (_, _) =>
+            {
+                ApplyFilter(lastReport, textField.Text?.Trim() ?? string.Empty);
+            };
+
             dialog.Add(label, textField);
             dialog.AddButton(new Button { Text = "_Cancel" });
             dialog.AddButton(new Button { Text = "_Apply" });
 
+            var savedFilter = currentFilter;
             textField.SetFocus();
             app.Run(dialog);
 
             if (!dialog.Canceled)
             {
                 currentFilter = textField.Text?.Trim() ?? string.Empty;
-                ApplyFilter(lastReport, currentFilter);
                 UpdateFooter();
+            }
+            else
+            {
+                // Restore the previous filter if the user cancelled.
+                ApplyFilter(lastReport, savedFilter);
             }
         }
 
