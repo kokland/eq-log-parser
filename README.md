@@ -19,6 +19,19 @@ For plain console output, use:
 dotnet run --project src\EqLogParser\EqLogParser.csproj -- --text eqlog_Sika_test.txt
 ```
 
+To keep the report live while the log is being written, use `--watch`.
+The default refresh interval is 30 seconds:
+
+```powershell
+dotnet run --project src\EqLogParser\EqLogParser.csproj -- --watch eqlog_Sika_test.txt
+```
+
+Use `--interval` to set a different refresh interval in seconds:
+
+```powershell
+dotnet run --project src\EqLogParser\EqLogParser.csproj -- --watch --interval 10 eqlog_Sika_test.txt
+```
+
 The parser reports:
 
 - total outgoing damage grouped by mob name

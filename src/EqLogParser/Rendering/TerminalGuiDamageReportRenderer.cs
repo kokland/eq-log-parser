@@ -10,6 +10,14 @@ public sealed class TerminalGuiDamageReportRenderer
 {
     public void Render(DamageReport report)
     {
+        Render(report, refreshReport: null, refreshInterval: null);
+    }
+
+    public void Render(
+        DamageReport report,
+        Func<DamageReport>? refreshReport,
+        TimeSpan? refreshInterval)
+    {
         using IApplication app = Application.Create();
         app.Init();
 
@@ -54,8 +62,30 @@ public sealed class TerminalGuiDamageReportRenderer
             Text = "Arrow keys/PageUp/PageDown scroll tables. Esc exits. Use --text for plain output."
         };
 
-        totalsFrame.Add(CreateTableView(CreateMobTotalsTable(report.Summary.Mobs)));
-        killsFrame.Add(CreateTableView(CreateKillsTable(report.Summary.Kills)));
+        var totalsTable = CreateTableView(CreateMobTotalsTable(report.Summary.Mobs));
+        var killsTable = CreateTableView(CreateKillsTable(report.Summary.Kills));
+
+        totalsFrame.Add(totalsTable);
+        killsFrame.Add(killsTable);
+
+        if (refreshReport is not null && refreshInterval is not null)
+        {
+            footer.Text = $"Live update every {refreshInterval.Value.TotalSeconds:N0}s. Arrow keys/PageUp/PageDown scroll tables. Esc exits.";
+            app.AddTimeout(refreshInterval.Value, () =>
+            {
+                var refreshed = refreshReport();
+                header.Text = BuildHeader(refreshed);
+                killsFrame.Title = $"Individual kills ({refreshed.Summary.Kills.Count:N0})";
+                totalsTable.Table = new DataTableSource(CreateMobTotalsTable(refreshed.Summary.Mobs));
+                killsTable.Table = new DataTableSource(CreateKillsTable(refreshed.Summary.Kills));
+                totalsTable.SetNeedsDraw();
+                killsTable.SetNeedsDraw();
+                header.SetNeedsDraw();
+                killsFrame.SetNeedsDraw();
+
+                return true;
+            });
+        }
 
         window.Add(header, totalsFrame, killsFrame, footer);
         app.Run(window);
@@ -82,7 +112,7 @@ public sealed class TerminalGuiDamageReportRenderer
         return
             $"{identity}{Environment.NewLine}" +
             $"Total damage: {report.Summary.TotalDamage:N0}    Damage lines: {report.Summary.TotalHits:N0}    Mob groups: {report.Summary.Mobs.Count:N0}{Environment.NewLine}" +
-            $"Log: {report.LogPath}";
+            $"Updated: {report.UpdatedAt:yyyy-MM-dd HH:mm:ss zzz}    Log: {report.LogPath}";
     }
 
     private static DataTable CreateMobTotalsTable(IReadOnlyList<MobDamage> mobs)

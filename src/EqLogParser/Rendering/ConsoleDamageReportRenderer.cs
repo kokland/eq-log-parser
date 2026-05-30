@@ -23,11 +23,18 @@ public sealed class ConsoleDamageReportRenderer : IDamageReportRenderer
 
         output.WriteLine($"Total damage: {report.Summary.TotalDamage:N0}");
         output.WriteLine($"Damage lines: {report.Summary.TotalHits:N0}");
+        output.WriteLine($"Updated: {report.UpdatedAt:yyyy-MM-dd HH:mm:ss zzz}");
         output.WriteLine();
     }
 
     private static void WriteMobTotals(IReadOnlyList<MobDamage> mobs, TextWriter output)
     {
+        if (mobs.Count == 0)
+        {
+            output.WriteLine("No outgoing player damage was found.");
+            return;
+        }
+
         var mobWidth = Math.Max("Mob".Length, mobs.Max(mob => mob.Name.Length));
         WriteDamageTableHeader(mobWidth, output, totalWidth: 12, directWidth: 12, yourWidth: 12, hitsWidth: 8);
 

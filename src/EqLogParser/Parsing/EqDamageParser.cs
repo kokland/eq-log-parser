@@ -12,7 +12,7 @@ public sealed class EqDamageParser(
 
     public DamageSummary Parse(string path)
     {
-        return Parse(File.ReadLines(path));
+        return Parse(ReadLogLines(path));
     }
 
     public DamageSummary Parse(IEnumerable<string> lines)
@@ -109,5 +109,20 @@ public sealed class EqDamageParser(
             .OrderByDescending(mob => mob.TotalDamage)
             .ThenBy(mob => mob.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private static IEnumerable<string> ReadLogLines(string path)
+    {
+        using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+
+        while (reader.ReadLine() is { } line)
+        {
+            yield return line;
+        }
     }
 }
