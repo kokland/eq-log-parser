@@ -133,22 +133,22 @@ public sealed class TerminalGuiDamageReportRenderer
             {
                 Title = "Filter by mob name",
                 Width = 52,
-                Height = 7
+                Height = 9
             };
 
             var label = new Label
             {
                 Text = "Name contains (empty = clear filter):",
                 X = 1,
-                Y = 0
+                Y = 1
             };
 
             var textField = new TextField
             {
                 Text = currentFilter,
                 X = 1,
-                Y = 1,
-                Width = Dim.Fill(1)
+                Y = 3,
+                Width = Dim.Fill(2)
             };
 
             // Live preview: filter the tables as the user types.
