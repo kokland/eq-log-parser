@@ -183,7 +183,8 @@ public sealed class TerminalGuiDamageReportRenderer
             {
                 filteredMobs  = r.Summary.Mobs .Where(m => m.Name     .Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
                 filteredKills = allKillsSorted  .Where(k => k.Mob.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
-                filteredLoot  = allLootSorted   .Where(l => l.MobName .Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+                filteredLoot  = allLootSorted   .Where(l => l.MobName .Contains(filter, StringComparison.OrdinalIgnoreCase)
+                                                          || l.ItemName.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
             }
 
             displayedKills = filteredKills;

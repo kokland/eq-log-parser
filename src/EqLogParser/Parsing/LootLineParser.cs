@@ -10,9 +10,13 @@ public sealed class LootLineParser
         @"^--You have looted (?<item>.+?) from (?<mob>.+?)'s corpse\.--$",
         RegexOptions.Compiled);
 
-    // You looted a Fine Steel Morning Star +1 from a bloodthirsty ghoul's corpse and sold it for ...
-    private static readonly Regex SoldRegex = new(
-        @"^You looted (?<item>.+?) from (?<mob>.+?)'s corpse and sold it for",
+    // Catches all "You looted <item> from <mob>'s corpse ..." variants:
+    //   ... and sold it for <price>
+    //   ... and sold it for free.
+    //   ... to create a <upgraded item>
+    //   (no suffix — plain kept)
+    private static readonly Regex YouLootedRegex = new(
+        @"^You looted (?<item>.+?) from (?<mob>.+?)'s corpse",
         RegexOptions.Compiled);
 
     public LootEvent? TryParse(string message)
@@ -21,9 +25,12 @@ public sealed class LootLineParser
         if (m.Success)
             return new LootEvent(0, string.Empty, m.Groups["item"].Value, m.Groups["mob"].Value, AutoSold: false);
 
-        m = SoldRegex.Match(message);
+        m = YouLootedRegex.Match(message);
         if (m.Success)
-            return new LootEvent(0, string.Empty, m.Groups["item"].Value, m.Groups["mob"].Value, AutoSold: true);
+        {
+            var autoSold = message.Contains("and sold it for", StringComparison.Ordinal);
+            return new LootEvent(0, string.Empty, m.Groups["item"].Value, m.Groups["mob"].Value, autoSold);
+        }
 
         return null;
     }
