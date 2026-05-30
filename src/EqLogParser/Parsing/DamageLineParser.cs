@@ -40,7 +40,8 @@ public sealed partial class DamageLineParser : IDamageLineParser
             "You",
             match.Groups["mob"].Value,
             int.Parse(match.Groups["damage"].Value, CultureInfo.InvariantCulture),
-            DamageKind.YourEffect);
+            DamageKind.YourEffect,
+            SpellName: match.Groups["spell"].Value);
     }
 
     private static DamageEvent? TryParseOtherDirectDamage(string message)
@@ -71,9 +72,9 @@ public sealed partial class DamageLineParser : IDamageLineParser
         RegexOptions.CultureInvariant)]
     private static partial Regex DirectDamageRegex();
 
-    // Matches "mob is ... by YOUR ... for N points of [X] damage[.]"
+    // Matches "mob is ... by YOUR SpellName for N points of [X] damage[.]"
     [GeneratedRegex(
-        @"^(?<mob>.+?)\s+is\s+.+?\s+by\s+YOUR\s+.+?\s+for\s+(?<damage>\d+)\s+points\s+of\s+(?:(?:\S+)\s+)?damage(?:\.|$)",
+        @"^(?<mob>.+?)\s+is\s+.+?\s+by\s+YOUR\s+(?<spell>.+?)\s+for\s+(?<damage>\d+)\s+points\s+of\s+(?:(?:\S+)\s+)?damage(?:\.|$)",
         RegexOptions.CultureInvariant)]
     private static partial Regex YourEffectDamageRegex();
 

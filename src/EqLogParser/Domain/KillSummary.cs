@@ -4,4 +4,5 @@ public sealed record KillSummary(
     int LineNumber,
     string Timestamp,
     MobDamage Mob,
-    string KilledBy);
+    string KilledBy,
+    double? Dps = null);

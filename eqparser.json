@@ -1,0 +1,8 @@
+{
+  "WatchIntervalSeconds": 15,
+  "ShowTotals": true,
+  "ShowKills": false,
+  "ShowLoot": false,
+  "ShowSessions": true,
+  "ShowXp": false
+}

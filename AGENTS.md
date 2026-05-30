@@ -30,25 +30,40 @@ All commands run from repo root. The log file path is relative to the working di
 
 ```
 Program.cs          CLI wiring (System.CommandLine), entry point, rendering dispatch
+AppConfig.cs        AppConfig record + ConfigStore (load/save eqparser.json)
 Parsing/            Log file parsing
                       DamageLineParser    — YOU/other direct damage + effect damage lines
+                                            captures spell name from YOUR effect lines
                       KillLineParser      — "X has been slain by Y" lines
                       LootLineParser      — looted/auto-sold loot lines (2 formats)
+                      DeathLineParser     — "You have been slain by X" (player deaths)
+                      ZoneLineParser      — "You have entered ZoneName." zone changes
+                      HealLineParser      — "You healed X for N hit points by Spell."
+                      ResistLineParser    — "X resisted your SpellName!"
+                      MissLineParser      — "You try to verb X, but miss!"
                       MobNameNormalizer   — canonicalises mob name casing
                       LogIdentityParser   — extracts character + server from filename
-                      EqDamageParser      — orchestrator: composes all parsers, links loot to kills
+                      EqDamageParser      — orchestrator: composes all parsers, links loot
+                                            to kills, detects session boundaries
 Domain/             Plain data types
                       DamageEvent, DamageKind
-                      MobDamage           — per-mob accumulator; holds BySource list
-                      SourceDamage        — per-source (player/pet) damage accumulator
-                      KillEvent, KillSummary
+                      MobDamage           — per-mob accumulator; holds BySource list,
+                                            FirstHitTimestamp, Resists, Misses
+                      SourceDamage        — per-source (player/pet) accumulator; BySpell
+                      KillEvent, KillSummary (includes Dps)
                       LootEvent           — raw loot line data
                       LootSummary         — loot enriched with linked KillLineNumber
-                      DamageSummary       — top-level result: Mobs, Kills, OpenEncounters, Loot
+                      DeathEvent          — player death with KilledBy
+                      ZoneEvent           — zone change with ZoneName
+                      HealEvent           — outgoing heal with Target, Amount, SpellName
+                      SessionSummary      — per-session aggregates (kills, loot, xp, dps,
+                                            deaths, resists, misses, zone, healing)
+                      DamageSummary       — top-level result: Mobs, Kills, OpenEncounters,
+                                            Loot, Xp, Sessions, Deaths, Zones, Heals
                       LogIdentity, DamageReport
 Rendering/          Output
                       ConsoleDamageReportRenderer   — plain text (--text flag)
-                      TerminalGuiDamageReportRenderer — three-panel TUI
+                      TerminalGuiDamageReportRenderer — five-panel TUI
 ```
 
 ## TUI keybinds (TerminalGuiDamageReportRenderer)
@@ -56,11 +71,14 @@ Rendering/          Output
 | Key | Action |
 |-----|--------|
 | `Tab` | Cycle focus through visible panels |
-| `F` | Filter dialog (live preview, affects all three panels) |
-| `D` | Kill detail dialog — per-source table + bar chart + linked loot (kills panel must have focus) |
-| `1` / `2` / `3` | Toggle totals / kills / loot panels; hiding all resets to all visible |
+| `F` | Filter dialog (live preview, affects totals / kills / loot panels) |
+| `D` | Kill detail dialog — source table + bar chart + spell breakdown + loot (kills panel focus) |
+| `S` | Session detail dialog — top mobs, loot, XP for selected session (sessions panel focus) |
+| `1` / `2` / `3` / `4` / `5` | Toggle totals / kills / loot / sessions / xp panels; hiding all resets |
 | `+` / `-` | Adjust live-refresh interval ±5 s (watch mode only) |
 | `Esc` | Quit |
+
+Panel visibility and watch interval are persisted to `eqparser.json` in the working directory.
 
 ## Key implementation notes
 
@@ -68,9 +86,14 @@ Rendering/          Output
 - Loot linking: each `LootEvent` is matched to the most-recent preceding kill of the same (normalised) mob name by line number.
 - `DamageEvent.Source` carries the attacker name; `MobDamage.BySource` holds `SourceDamage` entries sorted descending by total damage.
 - `DamageLineParser` handles three patterns: YOU direct, YOUR effect, and other-character direct (group members/pets, single-token source names).
+- YOUR effect regex captures `(?<spell>.+?)` between `YOUR` and `for N points`; stored as `DamageEvent.SpellName` and accumulated in `SourceDamage.BySpell`.
+- `MobDamage.FirstHitTimestamp` is set on the first `Add()` call; `KillSummary.Dps` = `TotalDamage / (killTime - firstHitTime).TotalSeconds`.
+- `MobDamage.Resists` / `Misses` incremented by `ResistLineParser` / `MissLineParser` in `EqDamageParser`.
+- Session detection: `EqDamageParser.TrackSession()` fires on every timestamped line; gap > `SessionIdleThreshold` (default 30 min) opens a new session.
+- `BuildSessions()` partitions kills/loot/xp/deaths/heals/zones by `StartLine`/`EndLine` after all lines are processed.
 - TUI uses `app.Keyboard.KeyDown` (application-scoped) so keys fire before focused views consume them.
 - `modalActive` bool guard prevents re-entrant modal opens.
-- `displayedKills: List<KillSummary>` is kept in sync with `killsTable` so `D` can do an O(1) row→KillSummary lookup.
+- `displayedKills` / `displayedSessions` are kept in sync with their tables for O(1) row→item lookup.
 - TUI (`Terminal.Gui`) is skipped automatically when stdin/stdout are redirected (`CanRunTerminalUi()`).
 - Kill isolation is by mob name — no unique mob IDs in EQ logs. Multiple same-name mobs active simultaneously will have damage merged.
 

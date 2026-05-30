@@ -6,15 +6,21 @@ namespace EqLogParser.Domain;
 /// configured idle threshold (default 30 minutes).
 /// </summary>
 public sealed record SessionSummary(
-    int    Number,
-    int    StartLine,
-    int    EndLine,
+    int      Number,
+    int      StartLine,
+    int      EndLine,
     DateTime StartTime,
     DateTime EndTime,
-    int    KillCount,
-    int    LootCount,
-    long   TotalDamage,
-    double XpPercent)
+    int      KillCount,
+    int      LootCount,
+    long     TotalDamage,
+    double   XpPercent,
+    int      Deaths,
+    int      Resists,
+    int      Misses,
+    string?  Zone,
+    long     TotalHealing,
+    double   Dps)
 {
     public TimeSpan Duration => EndTime - StartTime;
 }
